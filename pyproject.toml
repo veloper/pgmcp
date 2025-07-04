@@ -1,0 +1,44 @@
+[project]
+name = "pgmcp"
+version = "0.1.0"
+description = "PostgreSQL MCP"
+readme = "README.md"
+authors = [
+    { name = "veloper" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "asyncpg>=0.30.0",
+    "blinker>=1.9.0",
+    "click>=8.2.1",
+    "fastmcp>=2.8.1",
+    "handsup",
+    "nanoid>=2.0.0",
+    "networkx>=3.5",
+    "numpy>=2.3.1",
+    "psycopg2-binary>=2.9.10",
+    "pydantic>=2.11.7",
+    "pydantic-settings>=2.9.1",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+    "pytest-describe>=2.2.0",
+    "pytest-profiling>=1.8.1",
+    "pytest-sugar>=1.0.0",
+    "pytest-timeout>=2.4.0",
+    "scipy>=1.16.0",
+    "sh>=2.2.2",
+    "snakeviz>=2.2.2",
+]
+
+[project.scripts]
+pgmcp = "pgmcp:main"
+
+[tool.pytest.ini_options]
+describe_prefixes = ["describe_"]
+
+[tool.uv.sources]
+handsup = { path = "../handsup", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

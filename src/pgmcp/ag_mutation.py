@@ -330,18 +330,17 @@ class UpsertVertexCypherStatement(BaseCypherStatement):
         clauses = []
         label = self.encode_keyword(self.label)
         keyword = self.encode_keyword("id" if self.id else "ident")
-        identifier = int(self.id) if self.id else self.quote_string(str(self.ident))
-        properties = self.encode_dict(self.properties)
+        identifier = str(self.ident)
 
         if "ident" not in self.properties or not self.properties["ident"]:
             raise ValueError("UpsertVertexCypherStatement requires 'ident' in properties to be set.")
 
         if self.is_addition:
+            properties = self.encode_dict(self.properties)
             clauses.append("CREATE (n:%s %s)" % (label, properties))
         else:
-            # Use MATCH for updates to existing vertices
-            clauses.append("MATCH (n:%s {%s: %s})" % (label, keyword, identifier))
-            clauses.append("SET n += %s" % self.encode_dict_for_set("n", self.properties))
+            properties = self.encode_dict(self.properties)
+            clauses.append("MERGE (n:%s %s)" % (label, properties))
 
         return clauses
 

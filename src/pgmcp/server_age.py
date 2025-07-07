@@ -378,7 +378,7 @@ async def upsert_edge(
     if not updated_graph:
         raise Exception(f"Graph '{graph_name}' not found after upsert operation. Possible asynchronous operation dropped or modified during this operation.")
 
-    # await mutation_signal.send_async("upsert_edge", ctx=ctx, graph=graph)
+    await mutation_signal.send_async("upsert_edge", ctx=ctx, graph=graph)
 
     return updated_graph.model_dump()
 
@@ -454,110 +454,132 @@ async def drop_edge(
 
 
 
-# @mcp.tool(tags={"graph", "mutation", "upsert"}, annotations=ToolAnnotations(idempotentHint=True))
-# async def graphs_upsert(
-#     ctx: Context,
-#     graph_name: Annotated[str, Field(description="Name of the graph", min_length=1, max_length=128, pattern=GRAPH_NAME_PATTERN)],
-#     vertices: Annotated[List[dict], Field(
-#         description="List of vertex dicts to upsert", 
-#         json_schema_extra={
-#             "type": "array",
-#             "items": {
-#                 "type": "object",
-#                 "properties": {
-#                     "label": {
-#                         "type": "string",
-#                         "description": "The _type_ of vertex akin to a model name.",
-#                         "minLength": 1,
-#                         "maxLength": 128,
-#                         "example": ["PERSON", "IDEA", "ORGANIZATION", "LOCATION", "EVENT", "NODE", "GOAL", "TASK", "PROJECT", "CONCEPT", "HAS_MANY", "HAS_ONE", "BELONGS_TO", "PART_OF", "OWNS", "CHILD_OF", "PARENT_TO"],
-#                     },
-#                     "ident": {
-#                         "type": "string",
-#                         "description": "Primary unique ident for the vertex. If not provided, a new one will be generated."
-#                     },
-#                     "properties": {
-#                         "type": "object",
-#                         "description": "Key-value properties for the vertex akin to a model's attributes.",
-#                         "additionalProperties": True
-#                     }
-#                 },
-#                 "required": ["label", "properties"],
-#                 "additionalProperties": False
-#             }
-#         },
-#     )],
-#     edges: Annotated[List[dict], Field(
-#         description="List of edge dicts to upsert",
-#         json_schema_extra={
-#             "type": "array",
-#             "items": {
-#                 "type": "object",
-#                 "properties": {
-#                     "ident": {
-#                         "type": "string",
-#                         "description": "Optional unique ident for the edge",
-#                         "minLength": 1,
-#                         "maxLength": 128,
-#                         "pattern": IDENT_PATTERN
-#                     },
-#                     "start_ident": {
-#                         "type": "string",
-#                         "description": "Identifier of the start vertex",
-#                         "minLength": 1,
-#                         "maxLength": 128,
-#                         "pattern": IDENT_PATTERN,
-#                     },
-#                     "end_ident": {
-#                         "type": "string",
-#                         "description": "Identifier of the end vertex",
-#                         "minLength": 1,
-#                         "maxLength": 128,
-#                         "pattern": IDENT_PATTERN
-#                     },
-#                     "label": {
-#                         "type": "string",
-#                         "description": "Edge label",
-#                         "example": [ "PARENT_TO", "CHILD_OF", "PART_OF", "OWNS", "BELONGS_TO", "HAS_MANY", "HAS_ONE"],
-#                     },
-#                     "properties": {
-#                         "type": "object",
-#                         "description": "Key-value properties for the edge",
-#                         "additionalProperties": True
-#                     }
-#                 },
-#                 "required": ["label", "start_ident", "end_ident", "properties"],
-#                 "additionalProperties": False
-#             }
-#         }
-#     )]
-# ) -> dict:
-#     """
-#     Upserts both vertices and edges into the specified graph name.
+@mcp.tool(tags={"graph", "mutation", "upsert"}, annotations=ToolAnnotations(idempotentHint=True))
+async def upsert_graph(
+    ctx: Context,
+    graph_name: Annotated[str, Field(description="Name of the graph", min_length=1, max_length=128, pattern=GRAPH_NAME_PATTERN)],
+    vertices: Annotated[List[dict], Field(
+        description="List of vertex dicts to upsert", 
+        json_schema_extra={
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {
+                        "type": "string",
+                        "description": "The _type_ of vertex akin to a model name.",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "example": ["person", "idea", "organization", "location", "event", "node", "goal", "task", "project", "concept", "has_many", "has_one", "belongs_to", "part_of", "owns", "child_of", "parent_to"],
+                    },
+                    "ident": {
+                        "type": "string",
+                        "description": "Primary unique ident for the vertex. If not provided, a new one will be generated."
+                    },
+                    "properties": {
+                        "type": "object",
+                        "description": "Key-value properties for the vertex akin to a model's attributes.",
+                        "additionalProperties": True
+                    }
+                },
+                "required": ["label", "properties"],
+                "additionalProperties": False
+            }
+        },
+    )],
+    edges: Annotated[List[dict], Field(
+        description="List of edge dicts to upsert",
+        json_schema_extra={
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ident": {
+                        "type": "string",
+                        "description": "Optional unique ident for the edge",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": IDENT_PATTERN
+                    },
+                    "start_ident": {
+                        "type": "string",
+                        "description": "Identifier of the start vertex",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": IDENT_PATTERN,
+                    },
+                    "end_ident": {
+                        "type": "string",
+                        "description": "Identifier of the end vertex",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": IDENT_PATTERN
+                    },
+                    "label": {
+                        "type": "string",
+                        "description": "Edge label",
+                        "example": [ "PARENT_TO", "CHILD_OF", "PART_OF", "OWNS", "BELONGS_TO", "HAS_MANY", "HAS_ONE"],
+                    },
+                    "properties": {
+                        "type": "object",
+                        "description": "Key-value properties for the edge",
+                        "additionalProperties": True
+                    }
+                },
+                "required": ["label", "start_ident", "end_ident", "properties"],
+                "additionalProperties": False
+            }
+        }
+    )]
+) -> dict:
+    """
+    Upserts both Vertices and Edges into the specified graph_name.
 
-#     Args:
-#         graph_name: Name of the graph to upsert into.
-#         vertices: List of vertex dicts to upsert.
-#         edges: List of edge dicts to upsert.
-#
-#     LLM Usage:
-#     - Use to merge vertices and edges into an existing graph adding or deep merging existing them.
-#     - Returns: The updated graph metadata as a dict.
-#     - If the graph does not exist, it will NOT be created, and an error will be raised.    
-#     """
-#     graph = await age.get_graph(graph_name)
-#     if not graph:
-#         raise ValueError(f"Graph '{graph_name}' does not exist. Make sure you're using the correct graph name.")
+    This is a _hammer_ operation: it will deeply merge the provided vertices and edges into the existing graph, overwriting or adding as needed. Use with care.
+
+    LLM Instructions:
+        1. Use Chain of Through to represent an internal monolog that is vocalized.
+        2. Use _Speech Act Theory_ to determine the _Illocutionary Force_ of the user's utterances.
+        3. Determine the _Perlocutionary Effect_ expected by the user regarding the graph and how they expect it to change.
+        4. Use the insights from steps 1-3 to present a crystalized synthesis of your thinking to the user, taking the form of a plan of action.
+        5. Immediately use the insights and planning of the previous steps to form the parameters you generate for this tool, and execute it.
+
+    Important:
+        - This operation does not create a new graph if it does not exist; it will raise an error instead.
+        - Vertices and edges are matched by their unique identifiers and labels. Existing properties will be updated or merged, and new ones will be added.
+        - Edges are uniquely identified by [graph_name, label, start_ident, end_ident]. Changing the start or end vertex of an edge requires deleting and recreating the edge.
+
+    Args:
+        graph_name: Name of the graph to upsert into.
+        vertices: List of vertex dicts to upsert. Each dict should include at least 'label' and 'properties'.
+        edges: List of edge dicts to upsert. Each dict should include 'label', 'start_ident', 'end_ident', and 'properties'.
+
+    Returns:
+        The updated graph metadata as a dict.
+
+    LLM Usage:
+    - Use to:
+        - Merge or update multiple vertices and edges in an existing graph in a single operation.
+        - Add new vertices or edges if they do not exist.
+        - Deeply update properties of existing vertices and edges.
+    - Does NOT create a new graph if the specified graph does not exist.
+    - Returns: The updated graph metadata as a dict.
+"""
+    graph = await age.get_graph(graph_name)
+    if not graph:
+        raise ValueError(f"Graph '{graph_name}' does not exist. Make sure you're using the correct graph name.")
     
-#     graph = graph.deepcopy()
+    graph = graph.deepcopy()
 
-#     for vertex_data in vertices:
-#         graph.upsert_vertex(vertex_data)
+    for vertex_data in vertices:
+        graph.upsert_vertex(vertex_data)
 
-#     for edge_data in edges:
-#         graph.upsert_edge(edge_data)
+    for edge_data in edges:
+        graph.upsert_edge(edge_data)
 
-#     merged_graph = await age.upsert_graph(graph)
-    
-#     return merged_graph.model_dump()
+    merged_graph = await age.upsert_graph(graph)
+
+    await mutation_signal.send_async("upsert_graph", ctx=ctx, graph=merged_graph)
+
+    return merged_graph.model_dump()
 

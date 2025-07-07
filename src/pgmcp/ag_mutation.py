@@ -132,49 +132,55 @@ class AgMutation:
         id: int | None = None, **kwargs
     ) -> AgMutation:
         return cls(operation='update', entity='vertex', ident=ident, label=label, properties=properties, id=id, **kwargs)
-
-    def to_statement(self) -> BaseCypherStatement:
+            
+    def to_statements(self) -> list[BaseCypherStatement]:
+        """Return a list of Cypher statements for this mutation (plural form)."""
         if self.is_edge and (self.is_addition or self.is_update):
             if not self.start_ident or not self.end_ident:
                 raise ValueError("Edge mutations require both start_ident and end_ident to be set.")
-            return UpsertEdgeCypherStatement(
-                ident=self.ident,
-                label=self.label,
-                start_ident=self.start_ident,
-                end_ident=self.end_ident,
-                properties=self.properties,
-                id=self.id,
-                start_id=self.start_id,
-                end_id=self.end_id,
-                start_label=self.start_label,
-                end_label=self.end_label,
-            )
+            return [
+                UpsertEdgeCypherStatement(
+                    is_update=self.is_update,
+                    is_addition=self.is_addition,
+                    ident=self.ident,
+                    label=self.label,
+                    start_ident=self.start_ident,
+                    end_ident=self.end_ident,
+                    properties=self.properties,
+                    id=self.id,
+                    start_id=self.start_id,
+                    end_id=self.end_id,
+                    start_label=self.start_label,
+                    end_label=self.end_label,
+                ),
+            ]
         elif self.is_edge and self.is_removal:
             if not self.start_ident or not self.end_ident:
                 raise ValueError("Edge mutations require both start_ident and end_ident to be set.")
-            return DeleteEdgeCypherStatement(
+            return [DeleteEdgeCypherStatement(
                 ident=self.ident,
                 label=self.label,
                 start_ident=self.start_ident,
                 end_ident=self.end_ident,
                 id=self.id,
-            )
+            )]
         elif self.is_vertex and (self.is_addition or self.is_update):
-            return UpsertVertexCypherStatement(
+            return [UpsertVertexCypherStatement(
+                is_update=self.is_update,
+                is_addition=self.is_addition,
                 ident=self.ident,
                 label=self.label,
                 properties=self.properties or {},
                 id=self.id,
-            )
+            )]
         elif self.is_vertex and self.is_removal:
-            return DeleteVertexCypherStatement(
+            return [DeleteVertexCypherStatement(
                 ident=self.ident,
                 label=self.label,
                 id=self.id,
-            )
+            )]
         else:
             raise ValueError(f"Unsupported mutation type: {self.operation} for {self.entity}")
-            
         
 
 
@@ -242,6 +248,33 @@ class BaseCypherStatement:
         #     return f'"{safe_keyword}"'
         return keyword
     
+    def encode_dict_for_set(self, alias: str, data: Dict[str, Any]) -> str:
+        """It's a well known issue with property propagation on edge assignment that the map approach does not work, thus
+        we must use an assignment approach for the properties, which is a Cypher-specific syntax.
+        """
+        assignments = []
+        for k, v in data.items():
+            encoded_key = self.encode_keyword(str(k))
+            if isinstance(v, str):
+                encoded_value = self.quote_string(v)
+            elif isinstance(v, bool):
+                encoded_value = "true" if v else "false"
+            elif v is None:
+                encoded_value = "null"
+            elif isinstance(v, (int, float)):
+                encoded_value = str(v)
+            elif isinstance(v, dict):
+                encoded_value = self.encode_dict_for_set(alias, v)
+            elif isinstance(v, list):
+                encoded_value = "[" + ", ".join(self.quote_string(str(item)) for item in v) + "]"
+            else:
+                raise TypeError(f"Unsupported value type for Cypher encoding: {type(v)}")
+            
+            assignments.append(f"{alias}.{encoded_key} = {encoded_value}")
+        return ", ".join(assignments)
+        
+        
+    
     def encode_dict(self, data: Dict[str, Any]) -> str:
         """Encode a python dictionary to a Cypher-compatible string for its {key: value} properties syntax."""
         def encode_value(val):
@@ -280,6 +313,8 @@ class BaseCypherStatement:
 class UpsertVertexCypherStatement(BaseCypherStatement):
     """A stand alone class taking in the required fields to properly construct a Cypher query for an upsert operation."""
 
+    is_update   : bool          = field(default=False, init=True)  # Whether this is an update operation
+    is_addition : bool          = field(default=True, init=True)   # Whether this
     properties : Dict[str, Any] = field(default_factory=dict, init=True)
     id         : int | None     = field(default=None, init=True)  # agtype.id, if available
     
@@ -298,9 +333,16 @@ class UpsertVertexCypherStatement(BaseCypherStatement):
         identifier = int(self.id) if self.id else self.quote_string(str(self.ident))
         properties = self.encode_dict(self.properties)
 
-        # Use only MERGE to ensure node is created if missing
-        clauses.append("MERGE (n:%s {%s: %s})" % (label, keyword, identifier))
-        clauses.append("SET n = %s" % properties)
+        if "ident" not in self.properties or not self.properties["ident"]:
+            raise ValueError("UpsertVertexCypherStatement requires 'ident' in properties to be set.")
+
+        if self.is_addition:
+            clauses.append("CREATE (n:%s %s)" % (label, properties))
+        else:
+            # Use MATCH for updates to existing vertices
+            clauses.append("MATCH (n:%s {%s: %s})" % (label, keyword, identifier))
+            clauses.append("SET n += %s" % self.encode_dict_for_set("n", self.properties))
+
         return clauses
 
 
@@ -327,19 +369,23 @@ class DeleteVertexCypherStatement(BaseCypherStatement):
         clauses.append("DETACH DELETE n")
         
         return clauses
-        
+
 @dataclass
 class UpsertEdgeCypherStatement(BaseCypherStatement):
+    """Upserts the edge properties only, assuming the edge record already exists."""
 
-    start_ident : str           = field(metadata={"description": "agtype.start_ident"}, init=True)
-    end_ident   : str           = field(metadata={"description": "agtype.end_ident"}, init=True)
-    properties  : Dict[str, Any]= field(default_factory=dict, init=True)  # agtype.properties
-    id          : int | None    = field(default=None, init=True)  # agtype.id, if available
+    is_update   : bool          = field(default=False, init=True)  # Whether this is an update operation
+    is_addition : bool          = field(default=True, init=True)   # Whether this is an addition operation
+    properties  : Dict[str, Any] = field(default_factory=dict, init=True)  # agtype.properties
+    id          : int | None     = field(default=None, init=True)  # agtype.id, if available
     start_id    : int | None    = field(default=None, init=True)  # agtype.start_id, if available
     end_id      : int | None    = field(default=None, init=True)  # agtype.end_id, if available
+    start_ident : str | None    = field(default=None, init=True)  # agtype.start_ident, if available
+    end_ident   : str | None    = field(default=None, init=True)  # agtype.end_ident, if available
     start_label : str | None    = field(default=None, init=True)  # Optionally allow explicit labels
-    end_label   : str | None    = field(default=None, init=True)
-
+    end_label   : str | None    = field(default=None, init=True)  # Optionally allow explicit labels
+    
+    
     def validate(self):
         if not self.start_label or not self.start_label.strip():
             raise ValueError("UpsertEdgeCypherStatement requires a non-empty start_label.")
@@ -349,19 +395,24 @@ class UpsertEdgeCypherStatement(BaseCypherStatement):
     
     def clauses(self) -> List[str]:
         """Generates the **Cypher** clauses that fulfill this mutation."""
+        
         clauses = []
         start_label = self.encode_keyword(self.start_label) if self.start_label else ""
+        start_keyword = self.encode_keyword(settings.age.ident_property)
+
         end_label = self.encode_keyword(self.end_label) if self.end_label else ""
-        start_keyword = self.encode_keyword("ident")
-        end_keyword = self.encode_keyword("ident")
-        start_value = self.quote_string(str(self.start_ident))
-        end_value = self.quote_string(str(self.end_ident))
-        properties = self.encode_dict(self.properties)
-        # Use sprintf-style formatting for clarity
-        clauses.append("MERGE (a:%s {%s: %s})" % (start_label, start_keyword, start_value))
-        clauses.append("MERGE (b:%s {%s: %s})" % (end_label, end_keyword, end_value))
-        clauses.append("MERGE (a)-[e:%s]->(b)" % self.encode_keyword(self.label))
-        clauses.append("SET e = %s" % properties)
+        end_keyword = self.encode_keyword(settings.age.ident_property)
+        
+        start_ident = self.quote_string(str(self.start_ident))
+        end_ident = self.quote_string(str(self.end_ident))
+        
+        edge_label = self.encode_keyword(self.label)
+        edge_properties = self.encode_dict(self.properties)
+
+        clauses.append("MATCH (a:%s {%s: %s})" % (start_label, start_keyword, start_ident))
+        clauses.append("MATCH (b:%s {%s: %s})" % (end_label, end_keyword, end_ident))
+        clauses.append("MERGE (a)-[e:%s %s]->(b)" % (edge_label, edge_properties))
+        
         return clauses
 
 @dataclass

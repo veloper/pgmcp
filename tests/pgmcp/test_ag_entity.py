@@ -48,31 +48,7 @@ class TestAgEntity:
         subject.graph = ag_graph
         assert subject.graph is ag_graph
 
-    def test_from_agtype_record(self, agtype_records, ag_graph: AgGraph):
-        """
-        Should verify that from_agtype_record returns an AgVertex or AgEdge depending on the record type,
-        and that the returned object is correctly populated.
-        """
-        from pgmcp.ag_edge import AgEdge
-        from pgmcp.ag_entity import AgEntity
-        from pgmcp.ag_vertex import AgVertex
-
-        # Vertices
-        for rec in agtype_records:
-            entity = AgEntity.from_agtype_record(rec)
-            if rec.is_vertex:
-                assert isinstance(entity, AgVertex)
-                assert entity.label == rec.label
-                assert entity.id == rec.id
-                assert entity.properties.root == rec.properties
-            else:
-                assert isinstance(entity, AgEdge)
-                assert entity.label == rec.label
-                assert entity.id == rec.id
-                assert entity.start_id == rec.start_id
-                assert entity.end_id == rec.end_id
-                assert entity.properties.root == rec.properties
-
+    
     def test_property_sync_with_dict(self, subject: AgVertex):
         """
         3.1.1/3.1.2/3.1.3: Test property changes via entity and dict remain in sync. Mutate properties via both interfaces. Assert bidirectional sync. Use the global heuristic.

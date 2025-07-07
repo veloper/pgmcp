@@ -16,14 +16,13 @@ from pgmcp.ag_query_builder import AgQueryBuilderEdge, AgQueryBuilderVertex
 from pgmcp.ag_vertices import AgVertices
 from pgmcp.lru_cache import LRUCache
 from pgmcp.royal_description import RoyalDescription
+from pgmcp.utils import deep_merge
 
 
 if TYPE_CHECKING:
     from pgmcp.ag_edge import AgEdge
     from pgmcp.ag_vertex import AgVertex
     from pgmcp.db import AgtypeRecord
-
-
 
 
 class AgGraph(BaseModel):
@@ -149,9 +148,9 @@ class AgGraph(BaseModel):
         self._clear_query_cache()
         return vertex_instance
 
-    @overload # Pass obj
-    def add_edge(self, label: str, start_ident: str, end_ident: str, *, properties: Dict[str, Any] = {}, ident: str | None = None, id: int | None = None, start_id: int | None = None, end_id: int | None = None) -> AgEdge: ...
     @overload # Pass required + optional kwargs
+    def add_edge(self, label: str, start_ident: str, end_ident: str, *, properties: Dict[str, Any] = {}, ident: str | None = None, id: int | None = None, start_id: int | None = None, end_id: int | None = None) -> AgEdge: ...
+    @overload # Pass obj
     def add_edge(self, edge: AgEdge) -> AgEdge: ...
     @overload # Pass model_validate compatible dict
     def add_edge(self, edge: Dict[str, Any]) -> AgEdge: ...
@@ -221,21 +220,169 @@ class AgGraph(BaseModel):
     def get_edge_by_ident(self, ident: str) -> 'AgEdge | None':
         return self.edges.get_by_ident(ident)
     
+    
+    @overload
+    def upsert_vertex(self, label: str, ident: str, *, properties: Dict[str, Any] = {}, id: int | None = None) -> AgVertex: ...
+    @overload
+    def upsert_vertex(self, vertex: AgVertex) -> AgVertex: ...
+    @overload
+    def upsert_vertex(self, vertex: Dict[str, Any]) -> AgVertex: ...
+    def upsert_vertex(self, *args, **kwargs) -> AgVertex:
+        def resolve_to_instance(*args, **kwargs) -> AgVertex:
+            from pgmcp.ag_vertex import AgVertex
+            attrs: Dict[str, Any] = {}
+
+            if len(args) == 2 and isinstance(args[0], str) and isinstance(args[1], str):
+                attrs["label"] = args[0]
+                attrs["ident"] = args[1]
+                if "properties" in kwargs:
+                    attrs["properties"] = kwargs.get("properties", {})
+                if "id" in kwargs:
+                    attrs["id"] = kwargs.get("id")
+                return AgVertex.model_validate(attrs)
+            if len(args) == 1 and isinstance(args[0], AgVertex):
+                return args[0]
+            if isinstance(args, tuple) and len(args) > 0 and isinstance(args[0], dict):
+                return AgVertex.model_validate(args[0])
+            raise TypeError(f"Unrecognized arguments for upsert_vertex: {args}, {kwargs}")
+
+        vertex_instance = resolve_to_instance(*args, **kwargs)
+        vertex_instance.graph = self
+        vertex_instance.ident = vertex_instance.ident if vertex_instance.has_ident else self.generate_ident()
+        
+        
+        if existing := self.get_vertex_by_ident(vertex_instance.ident):
+            # Deep Merge Props
+            original_props = dict(existing.properties)
+            changed_props = dict(vertex_instance.properties)
+            merged_props = deep_merge(original_props, changed_props)
+            for key, value in merged_props.items():
+                existing.properties[key] = value
+                
+            existing.label = vertex_instance.label
+        else:
+            self.vertices.append(vertex_instance)
+        self._clear_query_cache()
+        return vertex_instance
+
+    @overload
+    def upsert_edge(self, label: str, start_ident: str, end_ident: str, *, properties: Dict[str, Any] = {}, ident: str | None = None, id: int | None = None, start_id: int | None = None, end_id: int | None = None) -> AgEdge: ...
+    @overload
+    def upsert_edge(self, edge: AgEdge) -> AgEdge: ...
+    @overload
+    def upsert_edge(self, edge: Dict[str, Any]) -> AgEdge: ...
+    def upsert_edge(self, *args, **kwargs) -> AgEdge:
+        def resolve_to_instance(*args, **kwargs) -> AgEdge:
+            from pgmcp.ag_edge import AgEdge
+            attrs: Dict[str, Any] = {}
+
+            if len(args) == 3 and all(isinstance(a, str) for a in args[:3]):
+                attrs["label"] = args[0]
+                attrs["start_ident"] = args[1]
+                attrs["end_ident"] = args[2]
+                if "properties" in kwargs:
+                    attrs["properties"] = kwargs.get("properties", {})
+                if "ident" in kwargs:
+                    attrs["ident"] = kwargs.get("ident")
+                if "id" in kwargs:
+                    attrs["id"] = kwargs.get("id")
+                if "start_id" in kwargs:
+                    attrs["start_id"] = kwargs.get("start_id")
+                if "end_id" in kwargs:
+                    attrs["end_id"] = kwargs.get("end_id")
+                return AgEdge.model_validate(attrs)
+            if len(args) == 1 and isinstance(args[0], AgEdge):
+                return args[0]
+            if isinstance(args, tuple) and len(args) > 0 and isinstance(args[0], dict):
+                return AgEdge.model_validate(args[0])
+            raise TypeError(f"Unrecognized arguments for upsert_edge: {args}, {kwargs}")
+
+        edge_instance = resolve_to_instance(*args, **kwargs)
+        
+        edge_instance.graph = self
+        edge_instance.ident = edge_instance.ident if edge_instance.has_ident else self.generate_ident()
+        if not edge_instance.has_start_ident or not edge_instance.has_end_ident:
+            raise ValueError(f"Edge must have both start_ident and end_ident set, for args, kwargs: {args}, {kwargs}")
+        
+        # If an ident is provided, try to find by ident
+        existing = self.get_edge_by_ident(edge_instance.ident)
+        
+        # Attempt to find an existing edge via start and end identifiers + label (if ident came up empty)
+        if not existing:
+            existing = self.edges.query().start_ident(edge_instance.start_ident).end_ident(edge_instance.end_ident).label(edge_instance.label).first() # type: ignore
+
+        # if _Still_ not found, then we create a new edge
+
+
+        if existing:
+            # Deep Merge Props
+            original_props = dict(existing.properties)
+            changed_props = dict(edge_instance.properties)
+            merged_props = deep_merge(original_props, changed_props)
+            for key, value in merged_props.items():
+                existing.properties[key] = value
+            
+            existing.label = edge_instance.label
+        else:
+            self.add_edge(edge_instance)
+        self._clear_query_cache()
+        return edge_instance
+    
+    
+    
 
     # ===================================================================
     # Type Conversion: Agtype
     # ===================================================================
 
     @classmethod
-    def from_agtype_records(cls, name: str, records: list[AgtypeRecord]) -> Self:
+    def from_agtype_records(cls, name: str, records: List[AgtypeRecord]) -> Self:
         # Circular import workaround
         from pgmcp.ag_edge import AgEdge
         from pgmcp.ag_vertex import AgVertex
+
+        # Gather
+        vertex_type_records: List[AgtypeRecord] = []
+        edges_type_records: List[AgtypeRecord] = []
+        for record in records:
+            if record.is_vertex:
+                vertex_type_records.append(record)
+            elif record.is_edge:
+                edges_type_records.append(record)
         
-        edges_type_records: List[AgtypeRecord] = [x for x in records if x.is_edge]
+        # Init Graph
         graph = cls.model_validate({"name": name})
-        graph.add_vertices([AgVertex.from_agtype_record(x) for x in records if x.is_vertex])
-        graph.add_edges([AgEdge.from_agtype_record(x) for x in edges_type_records])
+        
+        # Vertices
+        for record in vertex_type_records:
+            
+            label = record.label
+            properties = record.properties
+            ident = str(properties.get("ident"))
+            id    = record.id
+            graph.add_vertex(label, ident, id=id, properties=properties)
+        
+        # Edges
+        for record in edges_type_records:
+            label       = record.label
+            properties  = record.properties
+            ident       = str(properties.get("ident"))
+            start_ident = str(properties.get("start_ident"))
+            end_ident   = str(properties.get("end_ident"))
+            id          = record.id
+            start_id    = record.start_id
+            end_id      = record.end_id
+
+
+            graph.add_edge(label, start_ident, end_ident,
+                properties=properties,
+                ident=ident,
+                id=record.id,
+                start_id=start_id,
+                end_id=end_id
+            )
+    
+        
         return graph
 
     def to_agtype_records(self) -> List[AgtypeRecord]:

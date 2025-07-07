@@ -88,7 +88,7 @@ class AgEntity(BaseModel):
     def start_ident(self, value: str | None) -> None: self.properties.start_ident = value
 
     @property
-    def has_start_ident(self) -> bool: return self.properties.has_start_ident
+    def has_start_ident(self) -> bool: return self.properties.has_start_ident is not None
 
     @property
     def end_ident(self) -> str | None: return self.properties.end_ident
@@ -97,7 +97,7 @@ class AgEntity(BaseModel):
     def end_ident(self, value: str | None) -> None: self.properties.end_ident = value
     
     @property
-    def has_end_ident(self) -> bool: return self.properties.has_end_ident
+    def has_end_ident(self) -> bool: return self.properties.has_end_ident is not None
 
     # ===================================================================
     # Helpers

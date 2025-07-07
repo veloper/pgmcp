@@ -4,8 +4,16 @@ from typing import TYPE_CHECKING, Self
 
 from pydantic import Field, field_validator, model_serializer, model_validator
 
-from pgmcp.ag_entity import AgEntity
+from pgmcp.ag_entity import AgEntity, AgProperties
+from pgmcp.settings import get_settings
+from pgmcp.utils import deep_merge
 
+
+settings = get_settings()
+
+IDENT_PROPERTY: str = settings.age.ident_property
+START_IDENT_PROPERTY: str = settings.age.start_ident_property
+END_IDENT_PROPERTY: str = settings.age.end_ident_property
 
 if TYPE_CHECKING:
     from pgmcp.ag_graph import AgGraph
@@ -21,25 +29,45 @@ class AgEdge(AgEntity):
     # ===================================================================
 
     @model_validator(mode='after')
-    def validate_start_end(self) -> Self:
-        """Ensure exclusive validation for start_id and end_id -- both int, or both None."""
-
+    def validate_start_id_and_end_id(self) -> Self:
+        """Ensure exclusive validation for start_id and end_id -- both int XOR both None."""
         
         # Attempt coercion
         if isinstance(self.start_id, str) and isinstance(self.end_id, str):
             self.start_id = int(self.start_id)
             self.end_id = int(self.end_id)
         
-        # Both None?
-        if self.start_id is None and self.end_id is None:
-            return self
+        # Check types
+        start_type = type(self.start_id)
+        end_type = type(self.end_id)
+        valid_types = (int, type(None))
         
-        # Both valid integers?
-        if isinstance(self.start_id, int) and isinstance(self.end_id, int) and self.start_id >= 0 and self.end_id >= 0:
-            return self
-       
-        raise ValueError(f"Invalid edge start_id ({self.start_id!r}) and end_id ({self.end_id!r}). Both must be integers >= 0 or both None.")
+        # Type Mismatch?
+        if start_type != end_type:
+            raise ValueError(f"start_id ({self.start_id!r}) and end_id ({self.end_id!r}) must be of the same type (both int or both None).")
+        
+        # Invalid Types?
+        if start_type not in valid_types or end_type not in valid_types:
+            if start_type not in valid_types:
+                raise ValueError(f"start_id ({self.start_id!r}) must be an int or None.")
+            if end_type not in valid_types:
+                raise ValueError(f"end_id ({self.end_id!r}) must be an int or None.")
+        
+        return self
 
+
+    @model_validator(mode='after')
+    def validate_start_ident_and_end_ident(self) -> Self:
+        """These my not be none ever. This model is invalid is these are not found in edge properties."""
+        if not self.has_start_ident:
+            raise ValueError("start_ident must be set for AgEdge.")
+        
+        if not self.has_end_ident:
+            raise ValueError("end_ident must be set for AgEdge.")
+        
+        return self
+    
+    
     # ===================================================================
     # Relationships
     # ===================================================================
@@ -69,33 +97,51 @@ class AgEdge(AgEntity):
         }
         
     
-    # ===================================================================
-    # Type Conversions: AgtypeRecord
-    # ===================================================================
-
-    @classmethod
-    def from_agtype_record(cls, record: 'AgtypeRecord') -> Self:
-        # Validate required fields for edge
-        if not hasattr(record, 'label') or record.label is None:
-            raise TypeError("AgEdge requires 'label' field in AgtypeRecord.")
-        if not hasattr(record, 'properties') or not isinstance(record.properties, dict):
-            raise TypeError("AgEdge requires 'properties' field as a dict in AgtypeRecord.")
-        if not hasattr(record, 'start_id') or not hasattr(record, 'end_id'):
-            raise TypeError("AgEdge requires 'start_id' and 'end_id' fields in AgtypeRecord.")
-        return cls.model_validate({
-            "id": record.id,
-            "label": record.label,
-            "properties": record.properties,
-            "start_id": record.start_id,
-            "end_id": record.end_id,
-        })
-
+    # 
     def to_agtype_record(self) -> 'AgtypeRecord':
         from pgmcp.db import AgtypeRecord  # Local import to break circular dependency
+        properties = dict(self.properties)
+        properties.update({
+            "ident": self.ident if self.has_ident else None,
+            "start_ident": self.start_ident if self.has_start_ident else None,
+            "end_ident": self.end_ident if self.has_end_ident else None,
+        })
         return AgtypeRecord(
             label=self.label,
             id=self.id,
-            properties=self.properties.root,
+            properties=properties,
             start_id=self.start_id,
             end_id=self.end_id,
         )
+
+    # ===================================================================
+    # Helpers
+    # ===================================================================
+    
+    def upsert(self, *, label: str | None = None, properties: dict | None = None) -> Self:
+        """Upsert this edge using a non-destructive deep-merge.
+        
+        - Protects critical properties like ident, start_ident, and end_ident.
+        - Merges in the most non-destructive way possible.
+        - If label is provided, it will update the edge's label.
+        """
+        if label and label != self.label:
+            self.label = label
+            
+        if properties:
+            original_properties = self.properties.model_dump()
+            incoming_properties = properties
+            merged_properties = deep_merge(original_properties, incoming_properties)
+            
+            ident = merged_properties.get(IDENT_PROPERTY, self.ident)
+            start_ident = merged_properties.get(START_IDENT_PROPERTY, self.start_ident)
+            end_ident = merged_properties.get(END_IDENT_PROPERTY, self.end_ident)
+
+            # Ensure critical information is not lost
+            merged_properties[IDENT_PROPERTY] = ident
+            merged_properties[START_IDENT_PROPERTY] = start_ident
+            merged_properties[END_IDENT_PROPERTY] = end_ident
+
+            self.properties = AgProperties.model_validate(merged_properties)
+            
+        return self

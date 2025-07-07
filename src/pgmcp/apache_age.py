@@ -5,33 +5,41 @@ import asyncpg
 
 from pgmcp.ag_graph import AgGraph
 from pgmcp.ag_patch import AgPatch
-from pgmcp.db import AgtypeRecord, settings
+from pgmcp.db import AgtypeRecord
+from pgmcp.settings import get_settings
+
+
+settings = get_settings()
 
 
 class ApacheAGE:
     """An apache age repository for interacting with the apache age graph database."""
 
-    # Remove close method; rely on lazy pool recreation in settings
+    @asynccontextmanager
+    async def isolated_connection(self) -> AsyncGenerator[asyncpg.Connection, None]:
+        """Handles wrapping a connection in an async context manager AND a transaction."""
+        async with settings.db.connection() as conn:
+            async with conn.transaction():
+                yield conn
 
     async def cypher_fetch(self, graph_name: str, cypher_query: str = "MATCH (n) RETURN n UNION ALL MATCH ()-[e]->() RETURN e") -> List[AgtypeRecord]:
         """Fetch records from a Cypher query using a server-side cursor."""
+        records: List[asyncpg.Record] = []
         if not graph_name:
             raise ValueError("Graph name must be provided.")
-        async with settings.db.connection() as conn:
-            async with conn.transaction():
-                records: list[asyncpg.Record] = []
-                async for record in conn.cursor(f"SELECT * from cypher('{graph_name}', $$ {cypher_query} $$) as (v agtype);"):
-                    records.append(record)
-                return AgtypeRecord.from_raw_records(records)
+        async with self.isolated_connection() as conn:
+            async for record in conn.cursor(f"SELECT * from cypher('{graph_name}', $$ {cypher_query} $$) as (v agtype);"):
+                records.append(record)
+        return AgtypeRecord.from_raw_records(records)
 
     async def cypher_execute(self, graph_name: str, cypher_query: str) -> None:
         """Execute a Cypher query on the specified graph."""
-        async with settings.db.connection() as conn:
+        async with self.isolated_connection() as conn:
             age_query = f"SELECT * from cypher('{graph_name}', $$ {cypher_query} $$) as (v agtype);"
             await conn.execute(age_query)
 
     async def create_graph(self, graph_name: str) -> AgGraph:
-        async with settings.db.connection() as conn:
+        async with self.isolated_connection() as conn:
             query = f"SELECT create_graph('{graph_name}');"
             await conn.execute(query)
             return AgGraph(name=graph_name)
@@ -40,7 +48,7 @@ class ApacheAGE:
         if not graph_name:
             raise ValueError("Graph name must be provided.")
 
-        async with settings.db.connection() as conn:
+        async with self.isolated_connection() as conn:
             query = f"SELECT drop_graph('{graph_name}', true);" # true = cascade all
             await conn.execute(query)
 
@@ -48,18 +56,22 @@ class ApacheAGE:
         """Truncate all vertices and edges in the graph."""
         if not graph_name:
             raise ValueError("Graph name must be provided.")
-        await self.cypher_execute(graph_name, "MATCH (n) DETACH DELETE n")
-        await self.cypher_execute(graph_name, "MATCH ()-[e]->() DELETE e")
+        async with self.isolated_connection() as conn:
+            # Delete all edges first to avoid deadlocks, then delete all vertices
+            await self.cypher_execute(graph_name, "MATCH ()-[e]->() DELETE e")
+            await self.cypher_execute(graph_name, "MATCH (n) DELETE n")
 
     async def ensure_graph(self, graph_name: str) -> None:
         """Like create_graph, but does nothing if the graph already exists. """
-        if not await self.graph_exists(graph_name):
+        graph_exists = await self.graph_exists(graph_name)
+        if not graph_exists:
             await self.create_graph(graph_name)
 
 
     async def graph_exists(self, graph_name: str) -> bool:
         if not isinstance(graph_name, str) or not graph_name:
             raise ValueError("Graph name must be a non-empty string.")
+        
         return graph_name in await self.get_graph_names()
 
     async def get_graph(self, graph_name: str) -> AgGraph:
@@ -67,7 +79,7 @@ class ApacheAGE:
         if not graph_name:
             raise ValueError("Graph name must be provided.")
 
-        records = await self.cypher_fetch(graph_name, "MATCH (v) RETURN v")
+        records = await self.cypher_fetch(graph_name)
         graph = AgGraph.from_agtype_records(graph_name, records)
         return graph
 
@@ -82,15 +94,9 @@ class ApacheAGE:
         Only schemas that meet both criteria are considered valid AGE graphs and included in the result.
         """
         async with settings.db.connection() as conn:
-            query = """
-                SELECT nspname
-                FROM pg_catalog.pg_namespace n
-                WHERE nspname NOT LIKE 'pg_%'
-                  AND nspname != 'information_schema'
-                  AND EXISTS ( SELECT 1 FROM pg_class c WHERE c.relnamespace = n.oid AND c.relname = 'ag_label' );
-            """
+            query =  "SELECT name FROM ag_catalog.ag_graph ORDER BY name;"
             rows = await conn.fetch(query)
-            return [row['nspname'] for row in rows]
+            return [row['name'] for row in rows]
 
 
     async def get_or_create_graph(self, graph_name: str) -> AgGraph:
@@ -183,14 +189,13 @@ class ApacheAGE:
             async with conn.transaction():
                 patch = AgPatch.from_a_to_b(original_graph, new_graph)
 
+                # Load and setup AGE if not already done
+                await conn.execute("LOAD 'age';")
+                await conn.execute("SET search_path = ag_catalog, \"$user\", public;")
+
+                # Convert the patch to Cypher statements
                 cypher_statements = patch.to_cypher_statements()
-                cypher_sql = [f"SELECT * FROM cypher('{graph_name}', $$ {stmt} $$) AS (v agtype);" for stmt in cypher_statements]
-
-                statements = [
-                    "LOAD 'age';",
-                    """SET search_path = ag_catalog, "$user", public;""",
-                ] + cypher_sql
-
+                statements = [f"SELECT * FROM cypher('{graph_name}', $$ {stmt} $$) AS (v agtype);" for stmt in cypher_statements]
                 for stmt in statements:
                     await conn.execute(stmt)
         return new_graph

@@ -9,13 +9,15 @@ authors = [
 requires-python = ">=3.11"
 dependencies = [
     "asyncpg>=0.30.0",
+    "beautifulsoup4>=4.13.4",
     "blinker>=1.9.0",
     "click>=8.2.1",
     "fastmcp>=2.8.1",
-    "handsup",
+    "markdown-it-py>=3.0.0",
     "nanoid>=2.0.0",
     "networkx>=3.5",
-    "numpy>=2.3.1",
+    "numpy>=1.26.4,<2",
+    "protobuf>=6.31.1",
     "psycopg2-binary>=2.9.10",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.9.1",
@@ -25,7 +27,10 @@ dependencies = [
     "pytest-profiling>=1.8.1",
     "pytest-sugar>=1.0.0",
     "pytest-timeout>=2.4.0",
+    "pyvis>=0.3.2",
+    "requests>=2.32.4",
     "scipy>=1.16.0",
+    "sentencepiece>=0.2.0",
     "sh>=2.2.2",
     "snakeviz>=2.2.2",
 ]
@@ -36,8 +41,10 @@ pgmcp = "pgmcp:main"
 [tool.pytest.ini_options]
 describe_prefixes = ["describe_"]
 
-[tool.uv.sources]
-handsup = { path = "../handsup", editable = true }
+[tool.uv]
+required-environments = [
+    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
 
 [build-system]
 requires = ["hatchling"]

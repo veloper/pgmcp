@@ -35,7 +35,19 @@ class RoyalDescription:
     age      : ClassVar[List[str]] = [ "young", "old", "ancient", "modern", "new", "antique", "recent", "medieval", "vintage", "prehistoric" ]
     shape    : ClassVar[List[str]] = [ "round", "square", "rectangular", "triangular", "flat", "bulky", "slender", "curved", "pointed", "oval" ]
     color    : ClassVar[List[str]] = [ "red", "green", "blue", "yellow", "black", "white", "purple", "orange", "pink", "gray" ]
-    origin   : ClassVar[List[str]] = [ "French", "American", "Chinese", "Egyptian", "Greek", "Roman", "Japanese", "German", "Russian", "Brazilian" ]
+    origin   : ClassVar[List[str]] = [
+        "french", "american", "chinese", "egyptian", "greek", "roman", "japanese", "german", "russian", "brazilian",
+        "italian", "spanish", "british", "scottish", "irish", "welsh", "swiss", "swedish", "norwegian", "danish",
+        "finnish", "icelandic", "polish", "czech", "slovak", "hungarian", "austrian", "belgian", "dutch", "portuguese",
+        "turkish", "persian", "arabic", "hebrew", "syrian", "lebanese", "iraqi", "iranian", "pakistani", "indian",
+        "bangladeshi", "sri_lankan", "nepali", "tibetan", "mongolian", "korean", "thai", "vietnamese", "filipino", "malaysian",
+        "indonesian", "australian", "new_zealander", "canadian", "mexican", "argentinian", "chilean", "colombian", "peruvian", "venezuelan",
+        "ecuadorian", "bolivian", "paraguayan", "uruguayan", "panamanian", "cuban", "jamaican", "haitian", "dominican", "puerto_rican",
+        "nigerian", "ethiopian", "kenyan", "tanzanian", "ugandan", "ghanaian", "ivorian", "senegalese", "algerian", "moroccan",
+        "tunisian", "libyan", "sudanese", "somali", "south_african", "zimbabwean", "zambian", "botswanan", "namibian", "angolan",
+        "mozambican", "madagascan", "cameroonian", "congolese", "rwandan", "burundian", "malian", "nigerien", "chadian", "central_african",
+        "gabonese", "guinean", "sierra_leonean", "liberian", "beninese", "togolese", "burkinabe", "mauritanian", "gambian"
+    ]
     material : ClassVar[List[str]] = [ "tin", "wax", "fur", "ice", "gem", "oil", "tar", "net", "ash", "mud", "cot", "mat", "silk", "wool", "rub", "tin", "oak", "elm", "ivy", "pea", "cot", "den", "fib", "gum", "hay", "jet", "lid", "mat", "oak", "pad", "rag", "sap", "tan", "urn", "vat", "web", "yam", "zip", "clay", "sand" ]
     purpose  : ClassVar[List[str]] = [ "baking", "camping", "climbing", "cooking", "cutting", "diving", "drying", "eating", "fishing", "gardening", "grating", "growing", "hiking", "hunting", "icing", "jogging", "knitting", "marinating", "measuring", "mixing", "nursing", "opening", "painting", "piping", "pouring", "quilting", "racing", "reading", "riding", "rowing", "running", "sailing", "serving", "sewing", "shopping", "sleeping", "sowing", "stirring", "studying", "swimming", "teaching", "timing", "training", "traveling", "typing", "voting", "walking", "washing", "watering", "wiring" ]
     noun     : ClassVar[List[str]] = [ "ox", "id", "ax", "boy", "toy", "ant", "bee", "pig", "hen", "owl", "fox", "cow", "yak", "ram", "kid", "mob", "cop", "dad", "mom", "nun", "son", "pal", "gal", "guy", "lad", "kin", "doc", "don", "dan", "sir", "spy", "vet", "sub", "bud", "cub", "con", "cam", "cab", "bin", "bob", "bun", "bug", "bear", "bull", "deer", "duck", "goat", "king", "lady", "lion", "lord", "maid", "monk", "pope", "stag", "wolf", "hero", "guru", "jury", "pawn", "knob", "sage", "seer", "twin", "wife", "yogi", "yarn", "yawn" ]

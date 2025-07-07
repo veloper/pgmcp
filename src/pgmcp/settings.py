@@ -7,6 +7,7 @@ Supports .env files, environment variables, and runtime validation with DSN-base
 
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from pathlib import Path
 from typing import Any, AsyncGenerator, Dict
 
 import asyncpg
@@ -17,6 +18,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pgmcp.database_connection_settings import DatabaseConnectionSettings
 from pgmcp.environment import Environment
 
+
+ROOT_PATH = Path(__file__).parent.parent.parent
+ENV_FILE_PATH = ROOT_PATH / Environment.get_dotenv_filename()
 
 class AppSettings(BaseSettings):
     """Main application configuration."""
@@ -153,11 +157,13 @@ class AgeSettings(BaseSettings):
     end_ident_property: str
 
 
+
+
 class Settings(BaseSettings):
     """Complete application settings with multi-database support."""
     
     model_config = SettingsConfigDict(
-        env_file=(Environment.get_dotenv_filename()),
+        env_file=(ENV_FILE_PATH),
         env_file_encoding='utf-8',
         env_nested_delimiter='__',
     )

@@ -21,30 +21,11 @@ class TestAgEdge:
         """
         Returns a real AgtypeRecord for AgEdge tests.
         """
-        return AgtypeRecord(id=1, label="REL", properties={"ident": "test_edge"}, start_id=1, end_id=2)
-
-    def test_from_agtype_record(self, agtype_record: AgtypeRecord):
-        """
-        Should verify that AgEdge is correctly instantiated from an AgtypeRecord, with all fields
-        (id, label, properties, start, end) set as expected.
-        """
-        edge = AgEdge.from_agtype_record(agtype_record)
-        assert edge.id == agtype_record.id
-        assert edge.label == agtype_record.label
-        assert dict(edge.properties) == agtype_record.properties
-        assert edge.start_id == agtype_record.start_id
-        assert edge.end_id == agtype_record.end_id
-
-    def test_to_agtype_record(self, subject: AgEdge):
-        """
-        Should verify that AgEdge serializes back to an AgtypeRecord with the expected structure and values.
-        """
-        record = subject.to_agtype_record()
-        assert record.id == subject.id
-        assert record.label == subject.label
-        assert record.properties == dict(subject.properties)
-        assert record.start_id == subject.start_id
-        assert record.end_id == subject.end_id
+        return AgtypeRecord(id=1, start_id=1, end_id=2, label="REL", properties={
+            "ident": "test_edge", 
+            "start_ident":"test_start", 
+            "end_ident":"test_end"
+        })
 
     def test_vertex_relationships(self, subject: AgEdge, ag_graph: AgGraph):
         """
@@ -78,17 +59,6 @@ class TestAgEdge:
             
         assert exc_info is not None, "Expected TypeError for missing 'label' field in AgtypeRecord."
         
-        # Malformed: missing start/end for edge
-        bad = AgtypeRecord(id=1, label="REL", properties={}, start_id=123, end_id=None)  # type: ignore  # intentional: missing end_id
-        with pytest.raises(ValueError) as exc_info:
-            _ = AgEdge.from_agtype_record(bad)
-        
-        assert exc_info is not None, "Expected TypeError for missing end_id while having a start_id in AgEdge on parsing AgtypeRecord."
-        
-        # # Malformed: wrong types
-        # bad2 = AgtypeRecord(id="not-an-int", label=123, properties="not-a-dict", start_id="x", end_id=None)  # type: ignore  # intentional: wrong types for id, label, properties, start
-        # with pytest.raises(Exception):
-        #     _ = AgEdge.from_agtype_record(bad2)
 
     def test_property_mutation_and_sync(self, subject: AgEdge):
         """

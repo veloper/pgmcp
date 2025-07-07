@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any, Callable, Dict, List, Literal, Self
@@ -139,31 +140,43 @@ class AgPatch(BaseModel):
         for ident, e in b_edge_map.items():
             if ident in a_edge_map:
                 a_e = a_edge_map[ident]
+
+                # Compare labels and endpoints first
                 edge_changed = (
                     e.label != a_e.label or
                     e.start_ident != a_e.start_ident or
-                    e.end_ident != a_e.end_ident or
-                    e.properties.root != a_e.properties.root
+                    e.end_ident != a_e.end_ident
                 )
+
+                # Compare properties by sorting keys and values into OrderedDicts
+                def ordered(d):
+                    if not isinstance(d, dict):
+                        return d
+                    return OrderedDict(sorted((k, ordered(v)) for k, v in d.items()))
+
+                b_props = ordered(e.properties.root if e.properties else {})
+                a_props = ordered(a_e.properties.root if a_e.properties else {})
+
+                if not edge_changed:
+                    # Only set edge_changed if properties differ
+                    if b_props != a_props:
+                        edge_changed = True
+
                 if edge_changed:
                     if e.start_ident is None:
                         raise ValueError(f"Edge {e.ident} has no start_ident, cannot update.")
                     if e.end_ident is None:
                         raise ValueError(f"Edge {e.ident} has no end_ident, cannot update.")
                     # Look up start_label and end_label from vertices in graph_b
-                    start_label = None
-                    end_label = None
-                    if e.start_ident in b_vertex_map:
-                        start_label = b_vertex_map[e.start_ident].label
-                    if e.end_ident in b_vertex_map:
-                        end_label = b_vertex_map[e.end_ident].label
+                    start_label = b_vertex_map[e.start_ident].label if e.start_ident in b_vertex_map else None
+                    end_label = b_vertex_map[e.end_ident].label if e.end_ident in b_vertex_map else None
                     self.mutations.append(
                         AgMutation.update_edge(
                             ident=e.ident,
                             start_ident=e.start_ident,
                             end_ident=e.end_ident,
                             label=e.label,
-                            properties=e.properties.root.copy() if e.properties else {},
+                            properties=b_props.copy(),
                             id=e.id,
                             start_id=e.start_id,
                             end_id=e.end_id,
@@ -174,4 +187,9 @@ class AgPatch(BaseModel):
 
     def to_cypher_statements(self) -> List[str]:
         """Convert all mutations to Cypher statements."""
-        return [str(m.to_statement()) for m in self.mutations]
+        statements = []
+        for mutation in self.mutations:
+            if not isinstance(mutation, AgMutation):
+                raise TypeError(f"Expected AgMutation, got {type(mutation).__name__}")
+            statements.extend(mutation.to_statements())
+        return statements

@@ -23,16 +23,6 @@ class TestAgVertex:
         """
         return AgtypeRecord(id=1, label="Human", properties={"ident": "test_vertex"})
 
-    def test_from_agtype_record(self, agtype_record: AgtypeRecord):
-        """
-        Should verify that AgVertex is correctly instantiated from an AgtypeRecord, with all fields
-        (id, label, properties) set as expected.
-        """
-        vertex = AgVertex.from_agtype_record(agtype_record)
-        assert vertex.id == agtype_record.id
-        assert vertex.label == agtype_record.label
-        assert dict(vertex.properties) == agtype_record.properties
-
     def test_to_agtype_record(self, subject: AgVertex):
         """
         Should verify that AgVertex serializes back to an AgtypeRecord with the expected structure and values.
@@ -41,6 +31,7 @@ class TestAgVertex:
         assert record.id == subject.id
         assert record.label == subject.label
         assert record.properties == dict(subject.properties)
+        assert record.properties.get("ident") == subject.ident
 
     def test_invalid_record_handling(self):
         """

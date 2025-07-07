@@ -133,7 +133,10 @@ async def apache_age() -> ApacheAGE:
 @pytest_asyncio.fixture(scope="function")
 async def persisted_ag_graph(apache_age: ApacheAGE, ag_graph: AgGraph) -> AgGraph:
     """Fixture to create the same ag_graph but with it persisted in Apache AGE psql test database."""
+    await apache_age.ensure_graph(ag_graph.name)
+    
     await apache_age.truncate_graph(ag_graph.name)
+    
     await apache_age.upsert_graph(ag_graph)
     return ag_graph
 

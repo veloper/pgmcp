@@ -6,8 +6,8 @@ from pgmcp.ag_mutation import AgMutation
 class TestAgMutation:
     def test_vertex_add_generates_correct_cypher(self):
         m = AgMutation.add_vertex(ident="v1", label="Person", properties={"name": "Alice", "age": 30})
-        stmt = m.to_statement()
-        cypher = str(stmt)
+        stmts = m.to_statements()
+        cypher = "\n".join(map(str, stmts))
         assert m.is_vertex and m.is_addition
         assert "MERGE" in cypher and "Person" in cypher and "Alice" in cypher
         assert "SET n =" in cypher
@@ -15,16 +15,16 @@ class TestAgMutation:
 
     def test_vertex_remove_generates_correct_cypher(self):
         m = AgMutation.remove_vertex(ident="v1", label="Person")
-        stmt = m.to_statement()
-        cypher = str(stmt)
+        stmts = m.to_statements()
+        cypher = "\n".join(map(str, stmts))
         assert m.is_vertex and m.is_removal
         assert "DETACH DELETE n" in cypher
         assert "MATCH (n:Person" in cypher
 
     def test_vertex_update_generates_correct_cypher(self):
         m = AgMutation.update_vertex(ident="v1", label="Person", properties={"age": 31, "nickname": "Al"})
-        stmt = m.to_statement()
-        cypher = str(stmt)
+        stmts = m.to_statements()
+        cypher = "\n".join(map(str, stmts))
         assert m.is_vertex and m.is_update
         assert "SET n =" in cypher
         assert "31" in cypher and "nickname" in cypher
@@ -36,8 +36,8 @@ class TestAgMutation:
             # Provide endpoint labels to match new Cypher logic
             start_label="Person", end_label="Organization"
         )
-        stmt = m.to_statement()
-        cypher = str(stmt)
+        stmts = m.to_statements()
+        cypher = "\n".join(map(str, stmts))
         assert m.is_edge and m.is_addition
         assert "MERGE (a:Person" in cypher, f"Start node label missing in Cypher: {cypher}"
         assert "MERGE (b:Organization" in cypher, f"End node label missing in Cypher: {cypher}"
@@ -47,8 +47,8 @@ class TestAgMutation:
 
     def test_edge_remove_generates_correct_cypher(self):
         m = AgMutation.remove_edge(ident="e1", label="KNOWS", start_id=None, end_id=None, start_ident="v1", end_ident="v2")
-        stmt = m.to_statement()
-        cypher = str(stmt)
+        stmts = m.to_statements()
+        cypher = "\n".join(map(str, stmts))
         assert m.is_edge and m.is_removal
         assert "DELETE e" in cypher
         assert "MATCH ()-[e:KNOWS" in cypher
@@ -59,8 +59,8 @@ class TestAgMutation:
             ident="e1", start_ident="v1", end_ident="v2", label="KNOWS",
             properties={"since": 2021, "strained": True}
         )
-        stmt = m.to_statement()
-        cypher = str(stmt)
+        stmts = m.to_statements()
+        cypher = "\n".join(map(str, stmts))
         assert m.is_edge and m.is_update
         assert "SET e =" in cypher
         assert "since" in cypher and "2021" in cypher and "strained" in cypher and "ident" in cypher and "start_ident" in cypher and "end_ident" in cypher
@@ -74,8 +74,8 @@ class TestAgMutation:
             # Simulate label propagation (should be set by patch logic in real use)
             start_label="Person", end_label="Organization"
         )
-        stmt = m.to_statement()
-        cypher = str(stmt)
+        stmts = m.to_statements()
+        cypher = "\n".join(map(str, stmts))
         # The Cypher must include both endpoint labels
         assert "MERGE (a:Person" in cypher, f"Start node label missing in Cypher: {cypher}"
         assert "MERGE (b:Organization" in cypher, f"End node label missing in Cypher: {cypher}"
@@ -91,15 +91,16 @@ class TestAgMutation:
 
     def test_cypher_encoding_and_escaping(self):
         m = AgMutation.add_vertex(ident="v1", label="Per son", properties={"name": "O'Reilly", "desc": 'He said "hi"'})
-        cypher = str(m.to_statement())
+        stmts = m.to_statements()
+        cypher = "\n".join(map(str, stmts))
         assert "Per son" in cypher
         assert "O\\'Reilly" in cypher  # double-escaped as per implementation
         assert '\\"hi\\"' in cypher
 
     def test_vertex_add_generates_age_cypher(self):
         m = AgMutation.add_vertex(ident="v1", label="Person", properties={"name": "Joe"})
-        stmt = m.to_statement()
-        cypher = str(stmt)
+        stmts = m.to_statements()
+        cypher = "\n".join(map(str, stmts))
         # AGE expects: MERGE (n:Person {ident: 'v1'}) SET n = {...}
         assert "MERGE (n:Person {ident: 'v1'})" in cypher
         assert "SET n =" in cypher
@@ -110,8 +111,8 @@ class TestAgMutation:
             ident="e1", start_ident="v1", end_ident="v2", label="workWith",
             properties={"weight": 5}, start_label="Person", end_label="Person"
         )
-        stmt = m.to_statement()
-        cypher = str(stmt)
+        stmts = m.to_statements()
+        cypher = "\n".join(map(str, stmts))
         # AGE expects: MERGE (a:Person {ident: 'v1'}) MERGE (b:Person {ident: 'v2'}) MERGE (a)-[e:workWith]->(b) SET e = {...}
         assert "MERGE (a:Person {ident: 'v1'})" in cypher
         assert "MERGE (b:Person {ident: 'v2'})" in cypher
@@ -124,8 +125,8 @@ class TestAgMutation:
             ident="e2", start_ident="v1", end_ident="v2", label="distance",
             properties={"unit": "km", "value": 9228}, start_label="Country", end_label="Country"
         )
-        stmt = m.to_statement()
-        cypher = str(stmt)
+        stmts = m.to_statements()
+        cypher = "\n".join(map(str, stmts))
         assert "MERGE (a:Country {ident: 'v1'})" in cypher
         assert "MERGE (b:Country {ident: 'v2'})" in cypher
         assert "MERGE (a)-[e:distance]->(b)" in cypher

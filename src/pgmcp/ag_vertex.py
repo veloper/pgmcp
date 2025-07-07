@@ -5,7 +5,13 @@ from typing import TYPE_CHECKING, Any, Self
 from pydantic import field_validator
 
 from pgmcp.ag_entity import AgEntity
+from pgmcp.ag_properties import AgProperties
+from pgmcp.settings import get_settings
+from pgmcp.utils import deep_merge
 
+
+settings = get_settings()
+IDENT_PROPERTY: str = settings.age.ident_property
 
 if TYPE_CHECKING:
     from pgmcp.ag_graph import AgGraph
@@ -42,25 +48,44 @@ class AgVertex(AgEntity):
             raise ValueError("Label must be a non-empty string.")
         return value.strip()
 
-    # ===================================================================
-    # Type Conversion
-    # ===================================================================
     
-    @classmethod
-    def from_agtype_record(cls, record: 'AgtypeRecord') -> Self:
-        # Validate required fields for vertex
-        if not hasattr(record, 'properties') or not isinstance(record.properties, dict):
-            raise TypeError("AgVertex requires 'properties' field as a dict in AgtypeRecord.")
-        return cls.model_validate({
-            "id": record.id,
-            "label": record.label,
-            "properties": record.properties,
-        })
 
     def to_agtype_record(self) -> 'AgtypeRecord':
         from pgmcp.db import AgtypeRecord  # Local import to break circular dependency
+        properties = dict(self.properties)
+        properties.update({
+            "ident": self.ident if self.has_ident else None,
+        })
+        
         return AgtypeRecord(
             label=self.label,
             id=self.id,
-            properties=self.properties.root
+            properties=properties
         )
+
+    # ===================================================================
+    # Helpers
+    # ===================================================================
+    
+    
+    def upsert(self, *, label: str | None = None, properties: dict | None = None) -> Self:
+        """Upsert this edge using a non-destructive deep-merge.
+        
+        - Protects critical properties like ident, start_ident, and end_ident.
+        - Merges in the most non-destructive way possible.
+        - If label is provided, it will update the edge's label.
+        """
+        if label and label != self.label:
+            self.label = label
+            
+        if properties:
+            original_properties = self.properties.model_dump()
+            incoming_properties = properties
+            merged_properties = deep_merge(original_properties, incoming_properties)
+            
+            # Ensure critical information is not lost
+            merged_properties[IDENT_PROPERTY] = self.ident if self.has_ident else None
+            
+            self.properties = AgProperties.model_validate(merged_properties)
+            
+        return self

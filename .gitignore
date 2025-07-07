@@ -101,3 +101,6 @@ ENV/
 
 # Ignore wheel files
 *.whl
+
+# Ignore specific test files
+unrelated_tests.py

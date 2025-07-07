@@ -1,203 +1,268 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Callable, Generic, List, TypeVar
+
 import pytest
 
+from pgmcp.ag_edges import AgEdge
 from pgmcp.ag_graph import AgGraph
+from pgmcp.ag_mutation import AgMutation
+from pgmcp.ag_patch import AgPatch
+from pgmcp.ag_vertex import AgVertex
+from pgmcp.server_age import ApacheAGE
+
+
+T = TypeVar('T')
+class MISSING:
+    pass
+@dataclass
+class LazyFix(Generic[T]):
+    """A functor that lazily evaluates a function to get a value for which it then serves on subsequent calls."""
+    
+    func: Callable[[], T]
+    _result: T | MISSING = MISSING()
+    def __call__(self) -> T:
+        """Call the fixture to get the value."""
+        if isinstance(self._result, MISSING):
+            self._result = self.func()
+        return self._result
 
 
 # Test file for TestAgPatch
 
+@pytest.fixture
+def original_graph(ag_graph: AgGraph) -> AgGraph:
+    """Returns a fresh AgGraph instance for patch tests."""
+    return ag_graph
+
+
+@pytest.fixture
+def modifyable_graph(ag_graph: AgGraph) -> LazyFix[AgGraph]:
+    """Returns a deepcopy of the `original_graph` for modification."""
+    return LazyFix(func=lambda: ag_graph.deepcopy())
+
+@pytest.fixture
+def ag_patch(original_graph: AgGraph, modifyable_graph: LazyFix[AgGraph]) -> LazyFix[AgPatch]:
+    """Returns the result of AgPatch.from_a_to_b for `original_graph` and `modifyable_graph`."""
+    return LazyFix(func=lambda: AgPatch.from_a_to_b(original_graph, modifyable_graph()))
+
 class TestAgPatch:
-    @pytest.fixture
-    def ag_graph_pair(self, ag_graph: AgGraph):
-        """
-        Returns a tuple of two AgGraph instances for patch tests with a known set of changes between the two.
-        """
+    """
+    Tests the ag_patch instance itself through the above three fixtures.
+    Modify the `modifyable_graph` fixture to then assert on the results of the ag_patch() invocation's results.
+    """
+
+    def test_fixture_operations(self, original_graph: AgGraph, modifyable_graph: LazyFix[AgGraph], ag_patch: LazyFix[AgPatch]):
+        """ Should verify the basic operations of the ag_patch instance. """
+        patch = ag_patch()
+        assert isinstance(patch, AgPatch), "ag_patch should return a valid AgPatch instance"
+        assert patch.graph_a == original_graph, "Patch graph_a does not match original_graph"
+        assert patch.graph_b == modifyable_graph(), "Patch graph_b does not match modifyable_graph"
+
+
+    def test_vertex_add(self, modifyable_graph: LazyFix[AgGraph], ag_patch: LazyFix[AgPatch]):
+        """Should detect when a vertex is added."""
+        mod = modifyable_graph()
         
-        original = ag_graph
+        # Making nodes the three way possible to do so.
+        node1 = mod.add_vertex("Person", "larry", properties={ "name": "Larry Llama", })
+        node2 = mod.add_vertex({ "label": "Person", "ident": "bob", "properties": { "name": "Bob Builder" } })
+        node3 = mod.add_vertex(AgVertex.model_validate({ "label": "Person", "ident": "sally", "properties": { "name": "Sally Snake" } }))
         
-        # Deepcopy
-        modified = ag_graph.deepcopy()
+        # Create the patch
+        patch = ag_patch()
+        mutations = patch.mutations
+        assert isinstance(patch, AgPatch), "ag_patch should return a valid AgPatch instance"
         
-        # Apply Changes
+        assert len(mutations) == 3, "There should be 3 mutations for the added vertices"
+        for i, mutation in enumerate(mutations):
+            assert mutation.is_vertex, f"Mutation {i} should be a vertex mutation, got {mutation}"
+            assert mutation.is_addition, f"Mutation {i} should be an addition mutation, got {mutation}"
+
+    def test_vertex_update(self, original_graph: AgGraph, modifyable_graph: LazyFix[AgGraph], ag_patch: LazyFix[AgPatch]):
+        """Should detect when a vertex is updated."""
+        # Setup the original graph to contain the prior 3 vertices
+        original_graph.add_vertex("Person", "larry", properties={ "name": "Larry Llama" })
+        original_graph.add_vertex("Person", "bob", properties={ "name": "Bob Builder" })
+        original_graph.add_vertex("Person", "sally", properties={ "name": "Sally Snake" })
+
+
+
+        mod = modifyable_graph()
         
-        # TBD
+        # Get Larry and confirm initial conditions
+        larry = mod.vertices.get_by_ident("larry")
+        assert larry is not None, "Larry vertex should exist in the modifyable graph"
+        assert larry.properties.get("name") == "Larry Llama", "Larry's name should be 'Larry Llama' before update"
         
-        return original, modified
+        
+        # Update Larry's name
+        larry.properties["name"] = "Larry Llama Updated"
+        
+        
+        larry1 = mod.vertices.get_by_ident("larry")
+        assert larry1 is not None, "Larry vertex should still exist after update"
+        assert larry1.properties.get("name") == "Larry Llama Updated", "Larry's name should be 'Larry Llama Updated' after update"
+        
+        
+        # Check the patch
+        patch = ag_patch()
+        assert patch is not None, "Patch should exist"
+        assert len(patch.mutations) == 1, "There should be 1 mutation for the updated vertex"
+        
+        
+        mutation = patch.mutations[0]
+        assert isinstance(mutation, AgMutation), "Mutation should be an instance of AgMutation"
+        assert mutation.is_vertex, "Mutation should be a vertex mutation"
+        assert mutation.is_update, "Mutation should be an update mutation"
+        assert mutation.ident == "larry", "Mutation should be for the 'larry' vertex"
+        assert mutation.label == "Person", "Mutation should have label 'Person'"
+        assert mutation.properties.get("name") == "Larry Llama Updated", "Mutation properties should reflect the updated name"
 
-    def test_from_a_and_b(self, ag_graph_pair):
-        """
-        Should verify that a patch is correctly created from two graphs, capturing all additions,
-        removals, and updates for both vertices and edges.
-        """
-        pass
+    def test_vertex_remove(self, original_graph: AgGraph, modifyable_graph: LazyFix[AgGraph], ag_patch: LazyFix[AgPatch]):
+        """Should detect when a vertex is removed."""
+        # Setup the original graph to contain the prior 3 vertices
+        original_graph.add_vertex("Person", "larry", properties={ "name": "Larry Llama" })
+        original_graph.add_vertex("Person", "bob", properties={ "name": "Bob Builder" })
+        original_graph.add_vertex("Person", "sally", properties={ "name": "Sally Snake" })
 
-    def test_patch_field_integrity(self, ag_graph_pair):
-        """
-        Should verify that the patch's mutations list is a list and defaults to empty.
-        """
-        pass
+        mod = modifyable_graph()
+        
+        # Remove Larry
+        larry = mod.vertices.get_by_ident("larry")
+        assert larry is not None, "Larry vertex should exist in the modifyable graph"
+        
+        mod.remove_vertex(larry)
+        
+        # Confirm Larry is removed
+        larry1 = mod.vertices.get_by_ident("larry")
+        assert larry1 is None, "Larry vertex should not exist after removal"
+        
+        # Check the patch
+        patch = ag_patch()
+        assert patch is not None, "Patch should exist"
+        assert len(patch.mutations) == 1, "There should be 1 mutation for the removed vertex"
+        
+        mutation = patch.mutations[0]
+        assert isinstance(mutation, AgMutation), "Mutation should be an instance of AgMutation"
+        assert mutation.is_vertex, "Mutation should be a vertex mutation"
+        assert mutation.is_removal, "Mutation should be a removal mutation"
+        assert mutation.ident == "larry", "Mutation should be for the 'larry' vertex"
+
+    def test_edge_add(self, original_graph: AgGraph, modifyable_graph: LazyFix[AgGraph], ag_patch: LazyFix[AgPatch]):
+        """Should detect when an edge is added."""
+        # Setup expected vertices in the original graph
+        original_graph.add_vertex("Person", "larry", properties={ "name": "Larry Llama" })
+        original_graph.add_vertex("Person", "bob", properties={ "name": "Bob Builder" })
+        original_graph.add_vertex("Person", "sally", properties={ "name": "Sally Snake" })
+
+        mod = modifyable_graph()
+        
+
+        # Add edges
+        edge1 = mod.add_edge("KNOWS", "larry", "bob", properties={ "since": "2020-01-01" })
+        edge2 = mod.add_edge({ "label": "KNOWS", "start_ident": "bob", "end_ident": "sally", "properties": { "since": "2021-01-01" } })
+        edge3 = mod.add_edge(AgEdge.model_validate({ "label": "KNOWS", "start_ident": "sally", "end_ident": "larry", "properties": { "since": "2022-01-01" } }))
+        
+        # Confirm all edges have an `ident` set (automagically by AgGraph)
+        assert edge1.ident is not None, "Edge 1 should have an ident"
+        assert edge2.ident is not None, "Edge 2 should have an ident"
+        assert edge3.ident is not None, "Edge 3 should have an ident"
+        
+        # Create the patch
+        patch = ag_patch()
+        assert patch is not None, "Patch should exist"
+        assert len(patch.mutations) == 3, "There should be 3 mutations for the added edges"
+
+        for mutation in patch.mutations:
+            assert isinstance(mutation, AgMutation), "Mutation should be an instance of AgMutation"
+            assert mutation.is_edge, "Mutation should be an edge mutation"
+            assert mutation.is_addition, "Mutation should be an addition mutation"
+            assert mutation.start_ident is not None, "Mutation should have a start_ident"
+            assert mutation.end_ident is not None, "Mutation should have an end_ident"
+            assert mutation.properties.get("since") is not None, "Mutation properties should have a 'since' field"
 
 
-    def test_to_cypher_vertex_addition(self, ag_graph_pair):
-        from pgmcp.ag_patch import AgPatch
-        from pgmcp.ag_properties import AgProperties
-        from pgmcp.ag_vertex import AgVertex
-        orig, mod = ag_graph_pair
-        v = AgVertex.model_validate({"label": "Person", "properties": AgProperties({"ident": "v_add", "name": "Alice"})})
-        mod.add_vertex(v)
-        patch = AgPatch.from_a_to_b(orig, mod)
-        additions = [m for m in patch.mutations if m.is_addition and m.is_vertex]
-        assert additions, "No vertex addition detected"
-        cypher = str(additions[0].to_statement())
-        assert "MERGE (n:Person" in cypher
-        assert "Alice" in cypher
+    def test_edge_update(self, original_graph: AgGraph, modifyable_graph: LazyFix[AgGraph], ag_patch: LazyFix[AgPatch]):
+        """Should detect when an edge is updated."""
+        # Setup the original graph with vertices and edges
+        original_graph.add_vertex("Person", "larry", properties={ "name": "Larry Llama" })
+        original_graph.add_vertex("Person", "bob", properties={ "name": "Bob Builder" })
+        original_graph.add_vertex("Person", "sally", properties={ "name": "Sally Snake" })
+        original_graph.add_edge("KNOWS", "larry", "bob", properties={ "since": "2020-01-01", "weight": 0.23 })
+        original_graph.add_edge({ "label": "KNOWS", "start_ident": "bob", "end_ident": "sally", "properties": { "since": "2021-01-01", "weight": 0.5 } })
+        original_graph.add_edge(AgEdge.model_validate({ "label": "KNOWS", "start_ident": "sally", "end_ident": "larry", "properties": { "since": "2022-01-01", "weight": 0.8 } }))
 
-    def test_to_cypher_vertex_removal(self, ag_graph_pair):
-        from pgmcp.ag_patch import AgPatch
-        orig, mod = ag_graph_pair
-        if not mod.vertices:
-            pytest.skip("No vertices to remove")
-        v = mod.vertices.root[0]
-        mod.remove_vertex(v)
-        patch = AgPatch.from_a_to_b(orig, mod)
-        removals = [m for m in patch.mutations if m.is_removal and m.is_vertex]
-        assert removals, "No vertex removal detected"
-        cypher = str(removals[0].to_statement())
-        assert cypher.startswith(f"MATCH (n:{v.label}")
-        assert "DETACH DELETE" in cypher
+        mod = modifyable_graph()
 
-    def test_to_cypher_vertex_update(self, ag_graph_pair):
-        from pgmcp.ag_patch import AgPatch
-        orig, mod = ag_graph_pair
-        v = mod.vertices.root[0]
-        v.properties["age"] = 42
-        patch = AgPatch.from_a_to_b(orig, mod)
-        updates = [m for m in patch.mutations if m.is_update and m.is_vertex]
-        assert updates, "No vertex update detected"
-        cypher = str(updates[0].to_statement())
-        assert cypher.startswith(f"MATCH (n:{v.label}")
-        assert "42" in cypher
+        # Get the edge and confirm initial conditions
+        edge = mod.edges.start_ident("larry").end_ident("bob").first()
+        assert edge is not None, "Edge from larry to bob should exist in the modifyable graph"
+        assert edge.properties.get("since") == "2020-01-01", "Edge 'since' property should be '2020-01-01' before update"
+        assert edge.properties.get("weight") == 0.23, "Edge 'weight' property should be 0.23 before update"
 
-    def test_to_cypher_edge_addition(self, ag_graph_pair):
-        from pgmcp.ag_edge import AgEdge
-        from pgmcp.ag_patch import AgPatch
-        from pgmcp.ag_properties import AgProperties
-        orig, mod = ag_graph_pair
-        v1, v2 = mod.vertices.root[:2]
-        e = AgEdge.model_validate({
-            "label": "KNOWS",
-            "properties": AgProperties({"ident": "e_add", "start_ident": v1.ident, "end_ident": v2.ident, "since": 2024}),
-            "start_id": v1.id,
-            "end_id": v2.id
-        })
-        mod.add_edge(e)
-        patch = AgPatch.from_a_to_b(orig, mod)
-        additions = [m for m in patch.mutations if m.is_addition and m.is_edge and m.ident == "e_add"]
-        assert additions, "No edge addition detected for 'e_add'"
-        cypher = str(additions[0].to_statement())
-        assert "MERGE (a)-[e:KNOWS]->(b)" in cypher or "MERGE (a)-[e:PARENT_OF]->(b)" in cypher
-        assert "2024" in cypher
+        # Update edge properties
+        edge.properties["since"] = "2022-02-02"
+        edge.properties["weight"] = 0.97
 
-    def test_to_cypher_edge_removal(self, ag_graph_pair: tuple[AgGraph, AgGraph]):
-        from pgmcp.ag_patch import AgPatch
-        orig, mod = ag_graph_pair
-        e = mod.edges.root[0]
-        mod.remove_edge(e)
-        patch = AgPatch.from_a_to_b(orig, mod)
-        removals = [m for m in patch.mutations if m.is_removal and m.is_edge]
-        assert removals, "No edge removal detected"
-        cypher = str(removals[0].to_statement())
-        assert cypher.startswith(f"MATCH ()-[e:{e.label}")
-        assert "DELETE e" in cypher
+        # Confirm update
+        edge1 = mod.edges.start_ident("larry").end_ident("bob").first()
+        assert edge1 is not None, "Edge from larry to bob should still exist after update"
+        assert edge1.properties.get("since") == "2022-02-02", "Edge 'since' property should be updated"
+        assert edge1.properties.get("weight") == 0.97, "Edge 'weight' property should be updated"
 
-    def test_to_cypher_edge_update(self, ag_graph_pair: tuple[AgGraph, AgGraph]):
-        from pgmcp.ag_patch import AgPatch
-        orig, mod = ag_graph_pair
-        e = mod.edges.root[0]
-        e.properties["weight"] = 3.14
-        patch = AgPatch.from_a_to_b(orig, mod)
-        updates = [m for m in patch.mutations if m.is_update and m.is_edge]
-        assert updates, "No edge update detected"
-        cypher = str(updates[0].to_statement())
-        assert cypher.startswith(f"MATCH (a {{") or cypher.startswith(f"MATCH ()-[e:{e.label}")
-        assert "3.14" in cypher
+        # Check the patch
+        patch = ag_patch()
+        assert patch is not None, "Patch should exist"
+        assert len(patch.mutations) == 1, "There should be 1 mutation for the updated edge"
 
-    def test_major_graph_change_patch_and_cypher(self, ag_graph_pair: tuple[AgGraph, AgGraph]):
-        from pgmcp.ag_edge import AgEdge
-        from pgmcp.ag_patch import AgPatch
-        from pgmcp.ag_properties import AgProperties
-        from pgmcp.ag_vertex import AgVertex
-        orig, mod = ag_graph_pair
+        mutation = patch.mutations[0]
+        assert isinstance(mutation, AgMutation), "Mutation should be an instance of AgMutation"
+        assert mutation.is_edge, "Mutation should be an edge mutation"
+        assert mutation.is_update, "Mutation should be an update mutation"
+        assert mutation.start_ident == "larry", "Mutation should be for edge starting at 'larry'"
+        assert mutation.end_ident == "bob", "Mutation should be for edge ending at 'bob'"
+        assert mutation.label == "KNOWS", "Mutation should have label 'KNOWS'"
+        assert mutation.properties.get("since") == "2022-02-02", "Mutation properties should reflect the updated 'since'"
+        assert mutation.properties.get("weight") == 0.97, "Mutation properties should reflect the updated 'weight'"
+        assert mutation.properties.get("start_ident") == "larry", "Mutation properties should have 'start_ident' set to 'larry'"
+        assert mutation.properties.get("end_ident") == "bob", "Mutation properties should have 'end_ident' set to 'bob'"
+        
+        # get a fresh graph from the database, ensure that the edge has has its properties updated
+        
 
-        # 1. Remove a vertex
-        v_remove = mod.vertices.root[0]
-        mod.remove_vertex(v_remove)
-        # 2. Remove an edge
-        e_remove = mod.edges.root[0]
-        mod.remove_edge(e_remove)
-        # 3. Add a new vertex
-        v_add = AgVertex.model_validate({"id": 200, "label": "Robot", "properties": {"ident": "robot1", "name": "Robo"}})
-        mod.add_vertex(v_add)
-        # 4. Add a new edge
-        v2 = mod.vertices.root[1]
-        e_add = AgEdge.model_validate({
-            "label": "KNOWS",
-            "properties": {"ident": "robot_knows", "start_ident": v_add.ident, "end_ident": v2.ident, "since": 2025},
-            "start_id": v_add.id,
-            "end_id": v2.id
-        })
-        mod.add_edge(e_add)
-        # 5. Update a vertex property
-        v_update = mod.vertices.root[0]
-        v_update.properties["nickname"] = "G-Man"
-        # 6. Update an edge property
-        e_update = mod.edges.root[0]
-        e_update.properties["strained"] = True
-        # 7. Add another vertex
-        v_add2 = AgVertex.model_validate({"id": 201, "label": "Ghost", "properties": {"ident": "ghost1", "name": "Boo"}})
-        mod.add_vertex(v_add2)
-        # 8. Add another edge
-        e_add2 = AgEdge.model_validate({
-            "label": "HAUNTS",
-            "properties": {"ident": "ghost_haunts", "start_ident": v_add2.ident, "end_ident": v_update.ident},
-            "start_id": v_add2.id,
-            "end_id": v_update.id
-        })
-        mod.add_edge(e_add2)
-        # 9. Remove another edge
-        e_remove2 = mod.edges.root[1]
-        mod.remove_edge(e_remove2)
-        # 10. Update another vertex property
-        v_update2 = mod.vertices.root[1]
-        v_update2.properties["age"] = 99
 
-        patch = AgPatch.from_a_to_b(orig, mod)
-        cyphers = [str(m.to_statement()) for m in patch.mutations]
-        cypher_str = " ".join(cyphers)
-        # Confirm 10 distinct changes are present in the patch
-        assert len(patch.mutations) >= 10
-        # Confirm each change is reflected in the cypher
-        checks = [
-            # 1. Vertex removal
-            "DETACH DELETE" in cypher_str,
-            # 2. Edge removal
-            "DELETE e" in cypher_str,
-            # 3. Vertex addition
-            "MERGE (n:Robot" in cypher_str,
-            # 4. Edge addition
-            ":KNOWS" in cypher_str and "2025" in cypher_str,
-            # 5. Vertex property update
-            "nickname" in cypher_str,
-            # 6. Edge property update (new format: 'strained: true' in SET e = {...})
-            "strained: true" in cypher_str,
-            # 7. Another vertex addition
-            "MERGE (n:Ghost" in cypher_str,
-            # 8. Another edge addition
-            ":HAUNTS" in cypher_str,
-            # 9. Another edge removal
-            "DELETE e" in cypher_str,
-            # 10. Another vertex property update (new format: 'age: 99' in SET n = {...})
-            "age: 99" in cypher_str,
-        ]
-        assert all(checks), f"Not all major changes reflected in cypher: {checks}\nCypher output: {cypher_str}"
+    def test_edge_remove(self, original_graph: AgGraph, modifyable_graph: LazyFix[AgGraph], ag_patch: LazyFix[AgPatch]):
+        """Should detect when an edge is removed."""
+        # Setup the original graph with vertices and edges
+        original_graph.add_vertex("Person", "larry", properties={ "name": "Larry Llama" })
+        original_graph.add_vertex("Person", "bob", properties={ "name": "Bob Builder" })
+        original_graph.add_vertex("Person", "sally", properties={ "name": "Sally Snake" })
+        original_graph.add_edge("KNOWS", "larry", "bob", properties={ "since": "2020-01-01" })
+        original_graph.add_edge({ "label": "KNOWS", "start_ident": "bob", "end_ident": "sally", "properties": { "since": "2021-01-01" } })
+        original_graph.add_edge(AgEdge.model_validate({ "label": "KNOWS", "start_ident": "sally", "end_ident": "larry", "properties": { "since": "2022-01-01" } }))
+
+        mod = modifyable_graph()
+
+        # Remove the edge from larry to bob
+        edge = mod.edges.start_ident("larry").end_ident("bob").first()
+        assert edge is not None, "Edge from larry to bob should exist in the modifyable graph"
+        
+        mod.remove_edge(edge)
+        
+        # Confirm edge is removed
+        edge1 = mod.edges.start_ident("larry").end_ident("bob").first()
+        assert edge1 is None, "Edge from larry to bob should not exist after removal"
+
+        # Check the patch
+        patch = ag_patch()
+        assert patch is not None, "Patch should exist"
+        assert len(patch.mutations) == 1, "There should be 1 mutation for the removed edge"
+
+        mutation = patch.mutations[0]
+        assert isinstance(mutation, AgMutation), "Mutation should be an instance of AgMutation"
+        assert mutation.is_edge, "Mutation should be an edge mutation"
+        assert mutation.is_removal, "Mutation should be a removal mutation"
+        assert mutation.start_ident == "larry", "Mutation should be for edge starting at 'larry'"
+        assert mutation.end_ident == "bob", "Mutation should be for edge ending at 'bob'"

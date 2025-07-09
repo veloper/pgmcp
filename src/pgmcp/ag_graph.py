@@ -87,11 +87,11 @@ class AgGraph(BaseModel):
         """Generate a new unique identifier for a vertex or edge.
         
         It will take the form of the RoyalDescription with 3 words (last
-        being a noun) separated by the "§" delimiter to help prevent
+        being a noun) separated by the "_" delimiter to help prevent
         llms/ais from stemming, ngramming, or otherwise messing-up a unit
         of meaning.
         """
-        return RoyalDescription.generate(words=3, delimiter="§")
+        return RoyalDescription.generate(words=3, delimiter="_")
 
     # ===================================================================
     # Mutation Methods

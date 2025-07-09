@@ -56,7 +56,7 @@ AgGraph
 The identifiers (`Ident`s) are designed to minimize issues with stemming, n-gramming, or tokenization by AIs/LLMs, providing more consistent entity recall.
 
 ```python
-ident = RoyalDescription.generate(words=3, delimiter="§") # => "magnificent§ancient§king"
+ident = RoyalDescription.generate(words=3, delimiter="_") # => "magnificent_ancient_king"
 ```
 
 Identifiers are auto-generated when using the various mutation methods on the `AgGraph`. Alternatively, they can be directly set with those same methods.

@@ -7,7 +7,7 @@ from typing import Annotated, Any, Dict, List
 # Signals
 from blinker import Namespace
 from bs4 import BeautifulSoup
-from fastmcp import Context, FastMCP
+from fastmcp import Client, Context, FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import Field
 from pyvis.network import Network
@@ -49,8 +49,12 @@ async def on_mutation(sender: Any, ctx : Context, graph: AgGraph) -> None:
 # =====================================================
 
 # Updated pattern: allow alphanum, underscore, dash, dot, and slash for graph names and idents
-GRAPH_NAME_PATTERN = r"^[a-zA-Z0-9§_/]+$"
-IDENT_PATTERN = GRAPH_NAME_PATTERN  # Same pattern for idents
+GRAPH_NAME_PATTERN = r"^[a-zA-Z0-9_\-\+\.\@\*\=\/]+$"
+IDENT_PATTERN = r"^[a-zA-Z0-9_\-\+\.\@\*\=\/]+$"
+
+
+
+
 
 # =====================================================
 # Helper Functions
@@ -58,7 +62,9 @@ IDENT_PATTERN = GRAPH_NAME_PATTERN  # Same pattern for idents
 
 async def _write_visjs_single_page_html_app_to_file( graph: AgGraph ) -> Path:
     """Write a single-page HTML file using vis.js's Network to visualize the graph."""
-    nt = Network( height="1000px", width="100%", bgcolor="#FFFFFF", font_color="black", select_menu=True, filter_menu=True ) # type: ignore
+    nt = Network( height="1000px", width="100%", bgcolor="#FFFFFF", font_color="black", select_menu=True, filter_menu=True) # type: ignore
+
+    nt.show_buttons(filter_=['physics'])
 
     if not graph.vertices or not graph.edges:
         nt.add_node("empty", label="No Data", color="#FF0000", title="No vertices or edges available")
@@ -75,6 +81,7 @@ async def _write_visjs_single_page_html_app_to_file( graph: AgGraph ) -> Path:
     
     edge_ident_to_data: Dict[str, Any] = {
         f"{edge.start_ident}->{edge.end_ident}": {
+            "ident": edge.ident,
             "label": edge.label,
             "properties": edge.properties.model_dump_json(indent=2),
             "start_ident": edge.start_ident,
@@ -103,8 +110,8 @@ async def _write_visjs_single_page_html_app_to_file( graph: AgGraph ) -> Path:
                     <table>
                         <tr><th>Label</th><td>${data.label}</td></tr>
                         <tr><th>ID</th><td>${data.ident}</td></tr>` + 
-                        ( data.start_ident ? '<tr><th>Start ID</th><td>${data.start_ident}</td></tr>' : '' ) + 
-                        ( data.end_ident ? '<tr><th>End ID</th><td>${data.end_ident}</td></tr>' : '' ) + 
+                        ( data.start_ident ? `<tr><th>Start ID</th><td>${data.start_ident}</td></tr>` : '' ) + 
+                        ( data.end_ident ? `<tr><th>End ID</th><td>${data.end_ident}</td></tr>` : '' ) + 
                         `<tr colspan=2><th>Properties</th></tr>
                         <tr><td colspan=2>
                             <pre>${data.properties}</pre>
@@ -119,11 +126,11 @@ async def _write_visjs_single_page_html_app_to_file( graph: AgGraph ) -> Path:
     head_script = head_script.replace("[[[edge_ident_to_data_json]]]", edge_ident_to_data_json)
 
     for vertex in graph.vertices:
-        nt.add_node(vertex.ident, label=vertex.ident, color="#eeffa0", title=f"<<<{vertex.ident}>>>")
+        nt.add_node(vertex.ident, label=vertex.ident, color="#eeffa0", title=f"PLACEHOLDER{vertex.ident}PLACEHOLDER")
 
     for edge in graph.edges:
         ident = f"{edge.start_ident}->{edge.end_ident}"
-        nt.add_edge(edge.start_ident, edge.end_ident, label=edge.label, color="#6161614D", title=f"<<<{ident}>>>")
+        nt.add_edge(edge.start_ident, edge.end_ident, label=edge.label, color="#6161614D", title=f"PLACEHOLDER{ident}PLACEHOLDER")
 
     html_dir = Path("/tmp/pgmcp")
     html_dir.mkdir(parents=True, exist_ok=True)
@@ -145,21 +152,23 @@ async def _write_visjs_single_page_html_app_to_file( graph: AgGraph ) -> Path:
 
     html = str(soup)
 
-    # find all of the <<<ident>>> strings which will appear in the raw 
-    # html as \b<<<(?.+?)>>>\b, and sub it with simple `table_template($0)`
-    
-    html = re.sub(r'\b<<<(.+?)>>>\b', r'table_template("\1")', html)
+    # find all of the PLACEHOLDER(.+?)PLACEHOLDER strings which will appear in the raw 
+    # html as \bPLACEHOLDER(.+?)PLACEHOLDER\b, and sub it with simple `table_template($0)`
+
+    html = re.sub(r"""['"]PLACEHOLDER(.+?)PLACEHOLDER['"]""", r'table_template("\1")', html, flags=re.DOTALL| re.MULTILINE)
 
     html_path.write_text(html, encoding='utf-8')
     
     return html_path
+
+
+
 
 # =====================================================
 # =====================================================
 # Tools
 # =====================================================
 # =====================================================
-
 
 # ====================================================================
 # TOOL: generate_visualization
@@ -470,7 +479,10 @@ async def upsert_graph(
                         "description": "The _type_ of vertex akin to a model name.",
                         "minLength": 1,
                         "maxLength": 128,
-                        "example": ["person", "idea", "organization", "location", "event", "node", "goal", "task", "project", "concept", "has_many", "has_one", "belongs_to", "part_of", "owns", "child_of", "parent_to"],
+                        "example": [
+                            "person", "idea", "organization", "location", "event", "node", "goal", "task", "project",
+                            "concept", "has_many", "has_one", "belongs_to", "part_of", "owns", "child_of", "parent_to"
+                        ],
                     },
                     "ident": {
                         "type": "string",
@@ -478,13 +490,13 @@ async def upsert_graph(
                     },
                     "properties": {
                         "type": "object",
-                        "description": "Key-value properties for the vertex akin to a model's attributes.",
+                        "description": "Key-value properties for the vertex akin to a model's attributes. (MUST BE PRESENT, EVEN IF JUST AN EMPTY OBJECT)",
                         "additionalProperties": True
                     }
                 },
                 "required": ["label", "properties"],
                 "additionalProperties": False
-            }
+            },
         },
     )],
     edges: Annotated[List[dict], Field(
@@ -518,11 +530,13 @@ async def upsert_graph(
                     "label": {
                         "type": "string",
                         "description": "Edge label",
-                        "example": [ "PARENT_TO", "CHILD_OF", "PART_OF", "OWNS", "BELONGS_TO", "HAS_MANY", "HAS_ONE"],
+                        "example": [
+                            "PARENT_TO", "CHILD_OF", "PART_OF", "OWNS", "BELONGS_TO", "HAS_MANY", "HAS_ONE"
+                        ],
                     },
                     "properties": {
                         "type": "object",
-                        "description": "Key-value properties for the edge",
+                        "description": "Key-value properties for the edge (MUST BE PRESENT, EVEN IF JUST AN EMPTY OBJECT)",
                         "additionalProperties": True
                     }
                 },
@@ -583,3 +597,117 @@ async def upsert_graph(
 
     return merged_graph.model_dump()
 
+# =====================================================
+# =====================================================
+# Resources
+# =====================================================
+# =====================================================
+
+GRAPHING_GUIDELINES = """
+# Graphing Guidelines
+
+This document provides guidelines for modeling real-world entities and relationships in a graph database. It covers vertices, relationships, cardinality, and query optimization.
+
+## Preamble
+
+Examples here are illustrative and are not authoritative or exhaustive. They are meant to provide more context for how to make use of the guidelines in practice. 
+
+Adapt these guidelines _to the specific of the concept you're modeling_ -- NOT to the examples provided here.
+
+## Vertices
+
+1.  Model each real-world entity as a vertex.
+    - **Ex.** If you're modeling a library, create a `:Book` vertex for each book in the library.
+2.  Give each vertex one label only.
+    - **Ex.** A book should be labeled `:Book`, not `:Book:Fiction` or `:Book:NonFiction`.
+3.  Use properties to describe vertices.
+    - **Ex.** A `:Book` vertex might have properties like `title`, `author`, `isbn`, and `publicationYear`.
+4.  Name vertices clearly, descriptively.
+    - **Ex.** Use `:Customer`, `:Product`, `:Order` instead of generic names like `:Node1`, `:Node2`.
+
+## Edges
+
+5. Model connections as edges.
+    - **Ex.** A customer bought a product. Model this with an edge.
+6. Use one edge type per meaning.
+    - **Ex.** If multiple edge labels convey the same meaning, choose one and apply it consistently.
+    - **Ex.** `[:FOLLOWING, :IS_FOLLOWING, :FOLLOWER_OF]` should be unified to a single edge type like `[:FOLLOWS]`.
+7. Choose the right edge type: 
+    - **Ex.** Use `[:HAS_ONE]` for a person's passport, `[:HAS_MANY]` for an author's books.
+    - **Ex.** Other examples include `[:HAS]`, `[:IS_A]`, `[:RELATES_TO]`, `[:INTERACTS_WITH]`, `[:LOCATED_IN]`, `[:PART_OF]`, `[:USES]`, `[:MANAGES]`, `[:AFFECTS]`, `[:DEFINED_BY]`, `[:MEMBER_OF]`, `[:ATTENDS]`, `[:AUTHORED]`, `[:REQUIRES]`, `[:SIMILAR_TO]`.
+8. Keep edge properties simple.
+    - **Ex.** Create a `:Transaction` vertex instead of `[:BOUGHT {date, price}]`.
+9. Use edge properties for metadata only.
+    - **Ex.** Use `[:BOUGHT {timestamp}]` to record purchase time.
+10. Qualify links: add properties to clarify.
+    - **Ex.** Use `[:FRIENDS_WITH {type: "childhood" }]` for childhood friends.
+
+## Cardinality
+
+11. Use vertices for high cardinality categories.
+    - **Ex.** Instead of a `:Category` property on `:Product`, create a `:Category` vertex and create edges to it.
+12. Design for balanced connections always.
+    - **Ex.** Avoid having a single `:Category` vertex connected to millions of `:Product` vertices.
+13. Limit links to low cardinality vertices.
+    - **Ex.** Don't connect every `:User` to a single `:Gender` vertex.
+14. Isolate high-traffic vertices always.
+    - **Ex.** If a `:Website` vertex has millions of incoming links, consider strategies to reduce the load.
+15. Control link direction for traffic flow.
+    - **Ex.** Ensure that most relationships point *away* from a potential supervertex.
+16. Split hot vertices if you need to do so.
+    - **Ex.** If a `:PopularProduct` vertex is slowing down queries, create multiple `:PopularProduct` vertices and distribute the relationships.
+
+## Queries
+
+17. Model for fast query answers always.
+    - **Ex.** If you frequently need to find all products in a category, ensure you have a `category` property on the `:Product` vertex.
+18. Optimize common query patterns now.
+    - **Ex.** If you often need to find friends of friends, consider adding a pre-computed "mutual friends" relationship.
+
+## Data
+
+19. Normalize: no data repeats ever!
+    - **Ex.** Store a country's name in a single `:Country` vertex, and link all cities to that vertex.
+20. Reuse common vertices when you can.
+    - **Ex.** If multiple people live at the same address, link them all to the same `:Address` vertex.
+21. Centralize reference data in vertices.
+    - **Ex.** Create separate `:Category` vertices and link products to them, instead of storing category names as properties on product vertices.
+    
+## Takeaways
+
+These guidelines are meant to help you think about how to model real-world entities and relationships in a graph database. They are not exhaustive, but they should provide a good foundation for building effective graph schemas.
+
+Remember to adapt these guidelines to the specific concepts you're modeling, and not just follow the examples provided here.
+
+Always consider the specific requirements of your application and the queries you need to support.
+
+Graph databases are powerful tools, and with the right modeling techniques, you can unlock their full potential.
+"""
+
+@mcp.resource("resource://graphing-guidelines", mime_type="text/markdown", tags={"graph", "guidelines"})
+async def graphing_guidelines(ctx: Context) -> str:
+    """
+    Provides guidelines for how to think about and translate concepts into graph structures.
+    
+    Returns:
+        A string containing the graphing guidelines in Markdown format.
+    """
+    
+    return GRAPHING_GUIDELINES
+    
+# =====================================================
+# =====================================================
+# Prompts
+# =====================================================
+# =====================================================
+@mcp.prompt("prompt://graphing-guidelines", tags={"graph", "guidelines"})
+async def graph_planner(ctx: Context) -> str:
+    """
+    Provides a prompt for planning graph for the most success.
+    """
+    
+    return GRAPHING_GUIDELINES + "\n\n" + dedent(f"""
+        ## Final Notes
+
+        - Use this methodology to guide your graph planning and mutation processes around the user's request.
+    """)

@@ -15,7 +15,7 @@ END_IDENT_PROPERTY  : str = settings.age.end_ident_property
 
 def generate_ident() -> str:
     """Generate a new identifier."""
-    return RoyalDescription.generate(3, delimiter='§')
+    return RoyalDescription.generate(3, delimiter='_')  # Use '_' to prevent issues with stemming, n-gramming, etc.
 
 class AgProperties(RootModel[dict[str, Any]]):
     

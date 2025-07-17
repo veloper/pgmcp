@@ -8,12 +8,11 @@ Supports .env files, environment variables, and runtime validation with DSN-base
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict
+from typing import Any, AsyncGenerator, Dict, List
 
-import asyncpg
-
-from pydantic import Field, PrivateAttr, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from pgmcp.database_connection_settings import DatabaseConnectionSettings
 from pgmcp.environment import Environment
@@ -27,99 +26,18 @@ class AppSettings(BaseSettings):
 
     log_level: str = Field(default="INFO", description="Logging level", pattern=r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
     
-    
 class DbSettings(BaseSettings):
 
     model_config = SettingsConfigDict( env_nested_delimiter='__')
 
     connections: Dict[str, DatabaseConnectionSettings]
 
-    # Idiomatic Pydantic private attributes
-    _pool: asyncpg.Pool | None = PrivateAttr(default=None)
-    _connection_ctx: ContextVar[asyncpg.Connection | None] = PrivateAttr(default_factory=lambda: ContextVar("_connection_ctx", default=None))
-
-    def primary_database(self) -> DatabaseConnectionSettings:
+    def get_primary(self) -> DatabaseConnectionSettings:
         if primary := self.connections.get("primary", None):
             return primary
         raise ValueError("Primary database connection is not defined or is invalid.")
     
-    @property
-    async def pool(self) -> asyncpg.Pool:
-        if not self.primary_database():
-            raise ValueError("Primary database connection is not defined or is invalid.")
-
-        if self._pool is None:
-            # Create a connection pool for the primary database connection
-            primary: DatabaseConnectionSettings = self.primary_database()
-            
-            async def setup_connection(conn):
-                await conn.execute("LOAD 'age';")
-                await conn.execute("SET search_path = ag_catalog, '$user', public;")
-
-            self._pool = await asyncpg.create_pool(
-                dsn=str(primary.dsn),
-                min_size=primary.pool_min_connections or 1,
-                max_size= primary.pool_max_connections or 10,
-                timeout=primary.connection_timeout or 60,  # Default timeout of 60 seconds
-                command_timeout=primary.connection_timeout or 60,  # Default command timeout of 60 seconds
-                max_inactive_connection_lifetime=primary.pool_max_idle_time or 300,  # Default max idle time of 5 minutes
-                setup=setup_connection,  # Initialize connections with AGE and search_path
-            )
-            
-        return self._pool
     
-
-    async def close_pool(self):
-        if self._pool is not None:
-            await self._pool.close()
-            self._pool = None
-
-    
-    async def acquire_connection(self) -> asyncpg.Connection:
-        """Get a connection from the pool."""
-        if pool := await self.pool:
-            if conn := await pool.acquire():
-                return conn
-            raise RuntimeError("Failed to acquire a connection from the pool.")
-        raise ValueError("Database connection pool is not initialized.")
-    
-    async def release_connection(self, conn: asyncpg.Connection) -> None:
-        """Release a connection back to the pool."""
-        if pool := await self.pool:
-            await pool.release(conn)
-        else:
-            raise ValueError("Database connection pool is not initialized.")
-
-    
-    @asynccontextmanager
-    async def connection(self) -> AsyncGenerator[asyncpg.Connection, None]:
-        """
-        Reentrant async context manager for acquiring a database connection.
-        If already inside a connection context, reuses the same connection.
-        
-        Usage:
-        
-        async with db_settings.connection() as conn:
-            # Use the connection here
-            await conn.execute("SELECT 1")
-        
-        
-        """
-        conn = self._connection_ctx.get()
-        if conn is not None:
-            # Already inside a connection context, yield the same connection
-            
-            yield conn
-            return
-
-        conn = await self.acquire_connection()
-        token = self._connection_ctx.set(conn)
-        try:
-            yield conn
-        finally:
-            self._connection_ctx.reset(token)
-            await self.release_connection(conn)
-
     # Remove explicit close method; add lazy pool recreation in pool property
     @field_validator('connections', mode='before')
     @classmethod
@@ -156,7 +74,44 @@ class AgeSettings(BaseSettings):
     start_ident_property: str
     end_ident_property: str
 
+class VectorizeSettings(BaseSettings):
+    """Vectorization settings."""
+    # GUCs
+    batch_size                 : int         = Field(default=10000, description="Batch size for vectorize jobs")
+    num_bgw_proc               : int         = Field(default=1, description="Number of background worker processes")
+    embedding_req_timeout_sec  : int         = Field(default=120, description="Embedding request timeout in seconds")
+    embedding_service_api_key  : str | None  = Field(default=None, description="Embedding service API key")
+    embedding_service_host     : str | None  = Field(default=None, description="Embedding service host URL")
+    openai_base_url            : str | None  = Field(default="https://api.openai.com/v1", description="OpenAI base URL")
+    host                       : str | None  = Field(default=None, description="Postgres unix socket or host")
+    database_name              : str | None  = Field(default=None, description="Target database for vectorize operations")
+    openai_key                 : str | None  = Field(default=None, description="OpenAI API key")
+    ollama_service_host        : str | None  = Field(default=None, description="Ollama service host")
+    tembo_service_host         : str | None  = Field(default=None, description="Tembo service host")
+    tembo_api_key              : str | None  = Field(default=None, description="Tembo API key (JWT)")
+    cohere_api_key             : str | None  = Field(default=None, description="Cohere API key")
+    portkey_api_key            : str | None  = Field(default=None, description="Portkey API key")
+    portkey_virtual_key        : str | None  = Field(default=None, description="Portkey virtual key")
+    portkey_service_url        : str | None  = Field(default=None, description="Portkey service URL")
 
+    # Function Level Settings
+    transformer_provider: str | None = Field(default="openai", description="Transformer provider for vectorization")
+    transformer_model: str | None = Field(default="text-embedding-ada-002", description="Transformer model name for vectorization")
+
+    @property
+    def transformer(self) -> str:
+        """Return the transformer provider and model as a single string suitable for the vectorize.table(..., transformer=...) parameter."""
+        return f"{self.transformer_provider}/{self.transformer_model}"
+
+    def to_gucs_alter_statements(self) -> List[str]:
+        """Convert all settings that are not None to a string of GUC alter system set statements."""
+        gucs = []
+        for field_name, field_value in VectorizeSettings.model_fields.items():
+            value = getattr(self, field_name)
+            if value is not None:
+                psql_escaped_value = str(value).replace("'", "''")  # Escape single quotes for SQL
+                gucs.append(f"ALTER SYSTEM SET vectorize.{field_name} = '{psql_escaped_value}';")
+        return gucs
 
 
 class Settings(BaseSettings):
@@ -171,10 +126,11 @@ class Settings(BaseSettings):
     app: AppSettings 
     db: DbSettings
     age: AgeSettings
+    vectorize: VectorizeSettings
     
     def primary_database(self) -> DatabaseConnectionSettings:
         """Retrieve the primary database connection settings."""
-        return self.db.primary_database()
+        return self.db.get_primary()
     
     
 

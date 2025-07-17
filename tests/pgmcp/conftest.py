@@ -12,7 +12,7 @@ from pgmcp.settings import get_settings
 
 
 settings = get_settings()
-
+dbs = settings.db.get_primary()
 
 
 set_current_env(Environment.TESTING)
@@ -20,9 +20,11 @@ set_current_env(Environment.TESTING)
 
 
 @pytest_asyncio.fixture(autouse=True, scope="function")
-async def close_asyncpg_pool():
+async def close_sqlalchemy_engine():
+    """Fixture to ensure the SQLAlchemy engine is disposed after each test."""
     yield
-    await settings.db.close_pool()  # Ensure the pool is closed after each test
+
+    await dbs.sqlalchemy_dispose_async_engine()
 
 
 @pytest.fixture(scope="function")

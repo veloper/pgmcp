@@ -2,12 +2,11 @@ import asyncio
 
 from typing import AsyncGenerator
 
-import asyncpg
-
 from fastmcp import Client, FastMCP
 
 from pgmcp.ag_graph import AgGraph
 from pgmcp.server_age import mcp as age_mcp
+from pgmcp.server_psql import mcp as psql_mcp
 from pgmcp.settings import get_settings
 
 
@@ -15,9 +14,10 @@ settings = get_settings()
 db = settings.db
 
 
-# Define subserver
+# Define Server
 mcp = FastMCP(name="pgmcp")
 
 # Mount the AGEService FastMCP server as a subserver
 mcp.mount(age_mcp, prefix="age")
+mcp.mount(psql_mcp, prefix="psql")
 

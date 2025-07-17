@@ -7,7 +7,8 @@ from contextlib import AbstractAsyncContextManager, AsyncContextDecorator, Async
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Literal, Self, TypeVar
 
-import asyncpg
+from sqlalchemy.engine import Row
+from sqlalchemy.orm import declarative_base
 
 from pgmcp.settings import get_settings
 
@@ -15,7 +16,39 @@ from pgmcp.settings import get_settings
 settings = get_settings()
 IDENT_PROPERTY = settings.age.ident_property
 
-def decode_asyncio_agtype_recordset(records: list[asyncpg.Record]) -> list[dict]:
+Base = declarative_base()
+
+def decode_record(record: Row) -> dict:
+    """
+    Decode a single SQLAlchemy Row object containing AGE agtype strings
+    into a dict.
+    """
+    result = {}
+    for key, value in record.items():
+        if isinstance(value, str) and '::' in value:
+            # This is an agtype string, decode it
+            value = decode_agtype_string(value)
+        result[key] = value
+    return result
+
+def decode_agtype_string(agtype_string: str) -> Any:
+    """
+    Decode a single agtype string into a Python object.
+    This function should be implemented to handle the specific
+    agtype formats used in your database.
+    """
+    # Placeholder implementation - replace with actual decoding logic
+    if agtype_string.startswith('{') and agtype_string.endswith('}'):
+        # This looks like a JSON object
+        return json.loads(agtype_string)
+    elif agtype_string.startswith('[') and agtype_string.endswith(']'):
+        # This looks like a JSON array
+        return json.loads(agtype_string)
+    else:
+        # Fallback to returning the string itself
+        return agtype_string
+
+def decode_asyncio_agtype_recordset(records: list[Row]) -> list[dict]:
     """
     Efficiently decode a list of asyncpg.Record objects containing AGE agtype strings
     into a list of dicts, using a single json.loads call on a constructed JSON array.
@@ -23,7 +56,8 @@ def decode_asyncio_agtype_recordset(records: list[asyncpg.Record]) -> list[dict]
     and wraps the result in brackets.
     """
     agtype_strings = [
-        value for record in records for value in record.values()
+        value for record in records
+        for value in (record._mapping.values() if hasattr(record, '_mapping') else record.values())
         if isinstance(value, str) and '::' in value
     ]
     if not agtype_strings:
@@ -97,7 +131,7 @@ class AgtypeRecord(DbRecord):
     def is_edge(self) -> bool: return self.type == 'edge'
 
     @classmethod
-    def from_raw_records(cls, records: List[asyncpg.Record]) -> List[Self]:
+    def from_raw_records(cls, records: List[Row]) -> List[Self]:
         """Convert a list of asyncpg.Record to a list of DbRecord."""
         dicts : List[Dict] = decode_asyncio_agtype_recordset(records)
         return [cls.from_dict(record) for record in dicts]

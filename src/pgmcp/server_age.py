@@ -531,13 +531,17 @@ async def upsert_graph(
                         "type": "string",
                         "description": "Edge label",
                         "example": [
-                            "PARENT_TO", "CHILD_OF", "PART_OF", "OWNS", "BELONGS_TO", "HAS_MANY", "HAS_ONE"
+                            "PARENT_TO", "CHILD_OF", "PART_OF", "OWNS", "HAS_MANY", "HAS_ONE", "LINKS_TO"
                         ],
                     },
                     "properties": {
                         "type": "object",
                         "description": "Key-value properties for the edge (MUST BE PRESENT, EVEN IF JUST AN EMPTY OBJECT)",
-                        "additionalProperties": True
+                        "additionalProperties": True,
+                        "example": {
+                            "weight": 1.0,
+                            "description": "This edge represents a relationship between two vertices.",
+                        }
                     }
                 },
                 "required": ["label", "start_ident", "end_ident", "properties"],
@@ -584,11 +588,17 @@ async def upsert_graph(
         raise ValueError(f"Graph '{graph_name}' does not exist. Make sure you're using the correct graph name.")
     
     graph = graph.deepcopy()
+    
+    
 
     for vertex_data in vertices:
+        if "properties" not in vertex_data:
+            vertex_data["properties"] = {}
         graph.upsert_vertex(vertex_data)
 
     for edge_data in edges:
+        if "properties" not in edge_data:
+            edge_data["properties"] = {}
         graph.upsert_edge(edge_data)
 
     merged_graph = await age.upsert_graph(graph)

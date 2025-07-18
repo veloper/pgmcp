@@ -1,31 +1,20 @@
-import hashlib, os, pickle, re, time
+import hashlib, pickle, time
 
 from asyncio import run
-from collections import defaultdict
 from copy import deepcopy
 from functools import reduce
 from pathlib import Path
-from typing import Any, ClassVar, Dict, List, Optional, Self, cast
+from typing import Any, Dict
 
-import aiofiles, html2text, markdown2, trafilatura
+import aiofiles
 
-from bs4 import BeautifulSoup
-from bs4.element import Tag
 from httpx import AsyncClient, Response
-from markdownify import MarkdownConverter
-from markdownify import markdownify as md
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
-from rich import inspect
 from rich.console import Console
 from rich.pretty import Pretty
-from trafilatura.metadata import Document
-from unstructured.chunking.title import chunk_by_title
-from unstructured.documents.elements import CompositeElement, Element, ElementMetadata, Title
-from unstructured.partition.html import partition_html
-from unstructured.partition.md import partition_md
 
 from pgmcp.custom_markdown_converter import CustomMarkdownConverter
 from pgmcp.html_washing_machine import HTMLWashingMachine
+from pgmcp.markdown_document import MdDocument as MarkdownDocument
 
 
 def deep_merge(*dicts: Dict[str, Any]) -> Dict[str, Any]:
@@ -108,7 +97,7 @@ def deep_merge(*dicts: Dict[str, Any]) -> Dict[str, Any]:
 
 def pretty_print(obj: Any) -> None:
     console = Console()
-    console.print(Pretty(obj, indent_guides=True, expand_all=True, max_depth=4))
+    console.print(Pretty(obj, indent_guides=True, expand_all=True, max_depth=7))
 
 async def fetch_url(url: str, cache: bool = False, cache_dir: str = "/tmp/fetch_cache", ttl: int = 7 * 24 * 60 * 60) -> Response:
     """
@@ -189,8 +178,14 @@ def convert_html_to_markdown_content(
     return markdown_text
 
     
+def convert_markdown_to_markdown_document(markdown: str) -> MarkdownDocument:
+    """Converts a Markdown string to a deeply nested Document object."""
+    return MarkdownDocument.from_str(markdown)
     
-    return markdown_content
+    
+    
+    
+    
 
 async def amain():
     """
@@ -213,8 +208,12 @@ async def amain():
         
     console.log("Normalized HTML:")
 
-    print(markdown_text)
-    exit(0)
+    # print(markdown_text)
+    # exit(0)
+    
+    markdown_document = convert_markdown_to_markdown_document(markdown_text)
+    
+    pretty_print(markdown_document)
 
 
     

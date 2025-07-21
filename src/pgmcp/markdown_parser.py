@@ -10,12 +10,8 @@ from mistletoe.block_token import Paragraph as MdParagraph
 from mistletoe.block_token import Table as MdTable
 
 # Use a module alias to prevent circular import issues while allowing type hinting.
-from . import markdown_document as md
+from pgmcp import markdown_document as md
 
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # TypeVar for generic Document parsing, allowing for subclassing.
 T = TypeVar("T", bound=md.MdDocument)
@@ -28,7 +24,7 @@ class MarkdownParser:
     ensuring a clean separation of concerns.
     """
 
-    def parse(self, text: str, doc_class: Type[T]) -> T:
+    def parse(self, text: str, doc_class: Type[T], title: str | None = None) -> T:
         """
         Main entry point for parsing markdown text.
         Args:
@@ -37,11 +33,14 @@ class MarkdownParser:
         Returns:
             An instance of doc_class representing the structured content.
         """
-        logger.debug("Starting markdown parsing.")
+        
         ast = mistletoe.Document(io.StringIO(text))
         sections = self._build_sections(list(ast.children or []))
-        doc = doc_class(text=text, sections=sections)
-        logger.debug("Markdown parsing complete.")
+        doc = doc_class.model_validate({
+            "text": text,
+            "sections": sections,
+            "title": title if title else None
+        })
         return doc
 
     def _extract_text(self, token) -> str:
@@ -68,7 +67,7 @@ class MarkdownParser:
         try:
             sentence_texts = nltk.sent_tokenize(paragraph_text)
         except LookupError:
-            logger.info("NLTK 'punkt' model not found. Downloading...")
+            
             nltk.download('punkt', quiet=True)
             sentence_texts = nltk.sent_tokenize(paragraph_text)
         

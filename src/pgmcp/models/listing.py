@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy import ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from pgmcp.models.base import Base
+from pgmcp.models.content import Content
 from pgmcp.models.mixin import IsContentableMixin, IsListableMixin, IsSectionableMixin
 
 
@@ -23,21 +25,14 @@ class Listing(IsContentableMixin, IsSectionableMixin, IsListableMixin, Base):
     __tablename__ = "listings"
 
     # == Columns ============================================================== 
-    section_item_id: Mapped[int] = mapped_column(nullable=False)
+    section_item_id: Mapped[int] = mapped_column(ForeignKey("section_items.id"), nullable=False)
 
     # == Relationships ========================================================
     child_listing_items: Mapped[list["ListingItem"]] = relationship(
         "ListingItem",
-        back_populates = "list",
+        back_populates = "listing",
         cascade       = "all, delete-orphan",
         lazy          = "joined"
-    )
-
-    parent_listing_item: Mapped["ListingItem | None"] = relationship(
-        "ListingItem",
-        back_populates = "child_listing_items",
-        uselist        = False,
-        lazy           = "joined"
     )
 
     # == Methods ==============================================================

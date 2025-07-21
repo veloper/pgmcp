@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy import ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from pgmcp.models.base import Base
+from pgmcp.models.content import Content
 from pgmcp.models.mixin import IsContentableMixin
 
 
@@ -22,8 +24,8 @@ class Section(IsContentableMixin, Base):
     __tablename__ = "sections"
 
     # == Columns ============================================================== 
+    document_id : Mapped[int | None] = mapped_column(ForeignKey("documents.id"), nullable=True)
     title       : Mapped[str | None] = mapped_column(nullable=True)
-    document_id : Mapped[int | None] = mapped_column(nullable=True)
 
     # == Relationships ========================================================
     

@@ -68,12 +68,12 @@ class MdDocument(MdElement):
     title: str | None = Field(None, description="The optional title of the markdown document")
 
     @classmethod
-    def from_str(cls, text: str) -> Self:
+    def from_str(cls, text: str, title: str | None = None) -> Self:
         """Parses the markdown document using the new MarkdownParser."""
         # Import here to avoid circular dependency
         from pgmcp.markdown_parser import MarkdownParser
         parser = MarkdownParser()
-        return parser.parse(text, cls)
+        return parser.parse(text, cls, title=title)
 
 
 

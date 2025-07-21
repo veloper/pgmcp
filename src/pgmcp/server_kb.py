@@ -6,6 +6,8 @@ from fastmcp import Client, Context, FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+import pgmcp.models as models
+
 from pgmcp.settings import get_settings
 
 
@@ -85,10 +87,12 @@ OVERVIEW = """
     
     All tools follow a datamodel naming convention that is consistent with the above structures and akin to RESTful API design.
     
+    We're under the knowledge base library, thus leaving control over the corpus, and documents of that knowledge base.
+    
     Example:
     
-    - `libraries__corpora__documents__ingest :library_id, corpus_id, document_uri|document_source`
-    - `libraries__corpora__documents__get :library_id, corpus_id, document_id`
+    - `corpora__documents__ingest :library_id, :corpus_id, :document_uri`
+    - `corpora__documents__get :library_id, :corpus_id, :document_id`
     - `documents__get :id` # absolute allows simplified access on a root resource
     - `questions__search :query, limit=10` # search for questions similar to a given query etc.
 """
@@ -116,6 +120,24 @@ dbs = settings.db.get_primary()
 # =====================================================
 
 @mcp.tool
-def ingest(
+async def find_corpus(corpus_name: str) -> List[models.Corpus]:
+    """Find a corpus_id by its name."""
+    corpus = await models.Corpus.filter_by(name=corpus_name).all()
+    
+    
 
 
+    return results
+   
+
+@mcp.tool
+def ingest(corpus_id: int, document_uri: str) -> Dict[str, Any]:
+    """
+    Ingest a document into the KB system
+
+    Args:
+        corpus_id (int): The ID of the corpus to ingest the document into.
+        document_uri (str): The URI of the document to ingest.
+    Returns:
+        Dict[str, Any]: A dictionary containing the normalized Document object.
+    """

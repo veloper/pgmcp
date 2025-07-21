@@ -3,12 +3,11 @@ from __future__ import annotations
 import datetime
 
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, List, Self, Type
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, List, Optional, Self, Type, Union
 
 from blinker import Namespace
-from sqlalchemy import DateTime, func, schema
+from sqlalchemy import DateTime, and_, func, schema, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 from sqlalchemy.orm import DeclarativeBase, Mapped, declarative_base, mapped_column
 from sqlalchemy.sql.elements import NamedColumn
 from sqlalchemy.sql.selectable import Select
@@ -16,6 +15,14 @@ from typing_extensions import Literal
 
 from pgmcp.database_connection_settings import DatabaseConnectionSettings
 from pgmcp.settings import get_settings
+
+
+if TYPE_CHECKING:
+    from pgmcp.models.base_query_builder import QueryBuilder
+
+
+
+
 
 
 _settings = get_settings()
@@ -283,38 +290,252 @@ class Base(DeclarativeBase):
     # == Query Building Methods =========================================================
 
     @classmethod
-    async def select(cls: type[Self]) -> Select:
+    async def select(cls: type[Self]) -> Select[tuple[Self]]:
         """Return a SQLAlchemy select statement for the model."""
         return select(cls)
 
     @classmethod
-    async def filter_by(cls: type[Self], *args, **kwargs) -> Select:
+    async def filter_by(cls: type[Self], *args, **kwargs) -> Select[tuple[Self]]:
         """Return a SQLAlchemy select statement with filters applied."""
         return select(cls).filter(*args, **kwargs)
 
     @classmethod
-    async def get_by_id(cls: type[Self], id: int) -> Self | None:
+    async def find(cls: type[Self], id: int) -> Self | None:
         """Fetch a record by its primary key (if it's `id`)."""
         async with cls.async_session() as session:
             result = await session.execute(select(cls).where(cls.id == id))
             return result.scalar_one_or_none()
 
-    @classmethod
-    async def all(cls: type[Self]) -> list[Self]:
-        """Fetch all records for this model."""
-        async with cls.async_session() as session:
-            result = await session.execute(select(cls))
-            return list(result.scalars().all())
+    # == Rails-style Query Interface ====================================================
 
     @classmethod
-    async def count(cls: type[Self], *args, **kwargs) -> int:
-        """Return the count of records matching the filter."""
+    def query(cls: type[Self]):
+        """Rails: Model.all - returns a QueryBuilder for method chaining"""
+        from pgmcp.models.base_query_builder import QueryBuilder
+        return QueryBuilder(cls)
+
+    @classmethod
+    def where(cls: type[Self], *args, **kwargs):
+        """Rails: Model.where(condition)"""
+        return cls.query().where(*args, **kwargs)
+
+    @classmethod
+    def order(cls: type[Self], *args):
+        """Rails: Model.order(:column)"""
+        return cls.query().order(*args)
+
+    @classmethod
+    def order_by(cls: type[Self], *args):
+        """Alias for order()"""
+        return cls.query().order_by(*args)
+
+    @classmethod
+    def limit(cls: type[Self], n: int):
+        """Rails: Model.limit(n)"""
+        return cls.query().limit(n)
+
+    @classmethod
+    def offset(cls: type[Self], n: int):
+        """Rails: Model.offset(n)"""
+        return cls.query().offset(n)
+
+    @classmethod
+    def distinct(cls: type[Self], *columns):
+        """Rails: Model.distinct"""
+        return cls.query().distinct(*columns)
+
+    @classmethod
+    def select_columns(cls: type[Self], *columns):
+        """Rails: Model.select(:column1, :column2)"""
+        return cls.query().select(*columns)
+
+    @classmethod
+    def group(cls: type[Self], *columns):
+        """Rails: Model.group(:column)"""
+        return cls.query().group(*columns)
+
+    @classmethod
+    def group_by(cls: type[Self], *columns):
+        """Alias for group()"""
+        return cls.query().group_by(*columns)
+
+    @classmethod
+    def having(cls: type[Self], *conditions):
+        """Rails: Model.having(condition)"""
+        return cls.query().having(*conditions)
+
+    @classmethod
+    def joins(cls: type[Self], *relationships):
+        """Rails: Model.joins(:association)"""
+        return cls.query().joins(*relationships)
+
+    @classmethod
+    def left_joins(cls: type[Self], *relationships):
+        """Rails: Model.left_joins(:association)"""
+        return cls.query().left_joins(*relationships)
+
+    @classmethod
+    def includes(cls: type[Self], *relationships):
+        """Rails: Model.includes(:association)"""
+        return cls.query().includes(*relationships)
+
+    @classmethod
+    def preload(cls: type[Self], *relationships):
+        """Rails: Model.preload(:association)"""
+        return cls.query().preload(*relationships)
+
+    @classmethod
+    def eager_load(cls: type[Self], *relationships):
+        """Rails: Model.eager_load(:association)"""
+        return cls.query().eager_load(*relationships)
+
+    @classmethod
+    def readonly(cls: type[Self]):
+        """Rails: Model.readonly"""
+        return cls.query().readonly()
+
+    @classmethod
+    def lock(cls: type[Self], mode: str = "UPDATE"):
+        """Rails: Model.lock"""
+        return cls.query().lock(mode)
+
+    @classmethod
+    def none(cls: type[Self]):
+        """Rails: Model.none"""
+        return cls.query().none()
+
+    @classmethod
+    async def find_by(cls: type[Self], **kwargs):
+        """Rails: Model.find_by(attribute: value)"""
+        return await cls.query().find_by(**kwargs)
+
+    @classmethod
+    async def find_by_or_raise(cls: type[Self], **kwargs):
+        """Rails: Model.find_by!(attribute: value)"""
+        return await cls.query().find_by_or_raise(**kwargs)
+
+    @classmethod
+    async def exists(cls: type[Self], **kwargs):
+        """Rails: Model.exists?(conditions)"""
+        return await cls.query().exists(**kwargs)
+
+    @classmethod
+    async def take(cls: type[Self], n: Optional[int] = None):
+        """Rails: Model.take or Model.take(n)"""
+        return await cls.query().take(n)
+
+    @classmethod
+    async def pluck(cls: type[Self], *columns):
+        """Rails: Model.pluck(:column1, :column2)"""
+        return await cls.query().pluck(*columns)
+
+    @classmethod
+    async def ids(cls: type[Self]):
+        """Rails: Model.ids"""
+        return await cls.query().ids()
+
+    # Override existing methods to use QueryBuilder
+    @classmethod
+    async def all(cls: type[Self]):
+        """Rails: Model.all - fetch all records"""
+        return await cls.query().all()
+
+    @classmethod
+    async def first(cls: type[Self], n: Optional[int] = None) -> Union[Optional[Self], List[Self]]:
+        """Rails: Model.first or Model.first(n)"""
+        return await cls.query().first(n)
+
+    @classmethod
+    async def last(cls: type[Self], n: Optional[int] = None) -> Union[Optional[Self], List[Self]]:
+        """Rails: Model.last or Model.last(n)"""
+        return await cls.query().last(n)
+
+    @classmethod
+    async def count(cls: type[Self]):
+        """Rails: Model.count - count all records"""
+        return await cls.query().count()
+
+    # == Rails-style Creation and Destruction Methods =======================================
+
+    @classmethod
+    async def create(cls: type[Self], **attributes):
+        """Rails: Model.create(attributes)"""
+        instance = cls(**attributes)
+        await instance.save()
+        return instance
+
+    @classmethod
+    async def create_or_raise(cls: type[Self], **attributes):
+        """Rails: Model.create!(attributes) - raises on validation error"""
+        # For now, same as create - would need validation framework
+        return await cls.create(**attributes)
+
+    @classmethod
+    async def find_or_create_by(cls: type[Self], **attributes):
+        """Rails: Model.find_or_create_by(attributes)"""
+        instance = await cls.find_by(**attributes)
+        if instance is None:
+            instance = await cls.create(**attributes)
+        return instance
+
+    @classmethod
+    async def find_or_initialize_by(cls: type[Self], **attributes):
+        """Rails: Model.find_or_initialize_by(attributes)"""
+        instance = await cls.find_by(**attributes)
+        if instance is None:
+            instance = cls(**attributes)
+        return instance
+
+    @classmethod
+    async def update_all(cls: type[Self], values: Dict[str, Any], **conditions):
+        """Rails: Model.update_all(values, conditions)"""
+        from sqlalchemy import update
+        
+        stmt = update(cls).values(**values)
+        if conditions:
+            where_conditions = []
+            for key, value in conditions.items():
+                attr = getattr(cls, key)
+                where_conditions.append(attr == value)
+            stmt = stmt.where(and_(*where_conditions))
+            
         async with cls.async_session() as session:
-            stmt = select(func.count()).select_from(cls)
-            if args or kwargs:
-                stmt = stmt.filter(*args, **kwargs)
             result = await session.execute(stmt)
-            return result.scalar_one()
+            await session.commit()
+            return result.rowcount
 
+    @classmethod
+    async def delete_all(cls: type[Self], **conditions):
+        """Rails: Model.delete_all(conditions)"""
+        from sqlalchemy import delete
+        
+        stmt = delete(cls)
+        if conditions:
+            where_conditions = []
+            for key, value in conditions.items():
+                attr = getattr(cls, key)
+                where_conditions.append(attr == value)
+            stmt = stmt.where(and_(*where_conditions))
+            
+        async with cls.async_session() as session:
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount
 
+    @classmethod
+    async def destroy_all(cls: type[Self], **conditions):
+        """Rails: Model.destroy_all(conditions) - runs callbacks"""
+        # Find all matching records first to run callbacks
+        if conditions:
+            records = await cls.where(**conditions).all()
+        else:
+            records = await cls.all()
+            
+        count = 0
+        for record in records:
+            await record.destroy()
+            count += 1
+            
+        return count
 
+    # =======================================================================================

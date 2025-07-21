@@ -155,7 +155,7 @@ class DatabaseConnectionSettings(BaseModel):
             instance = klass()
             _session_ctx.set(instance)
 
-        if (instance := _session_ctx.get()) and not isinstance(instance, AsyncSession):
+        if (instance := _session_ctx.get()) and isinstance(instance, AsyncSession):
             return cast(AsyncSession, instance)
             
         # Should not happen, but just in case

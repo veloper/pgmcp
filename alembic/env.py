@@ -3,6 +3,7 @@ import importlib, pkgutil
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy_declarative_extensions import register_alembic_events
 
 from alembic import context
 # add your model's MetaData object here
@@ -20,6 +21,7 @@ def import_all_model_modules():
 
 import_all_model_modules()
 
+register_alembic_events(schemas=True, roles=True, grants=True, rows=True)
 
 
 pgmcp_settings = get_settings()

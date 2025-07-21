@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy import ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy_utils import generic_relationship
 
@@ -27,7 +28,7 @@ class SectionItem(Base):
     }
 
     # == Columns ==============================================================
-    section_id      : Mapped[int] = mapped_column(nullable=False)
+    section_id      : Mapped[int] = mapped_column(ForeignKey("sections.id"), nullable=False)
     sectionable_type: Mapped[str] = mapped_column(nullable=False)
     sectionable_id  : Mapped[int] = mapped_column(nullable=False)
     position        : Mapped[int] = mapped_column(nullable=False, default=0)

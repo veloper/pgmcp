@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy import ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy_utils import generic_relationship
 
 from pgmcp.models.base import Base
+from pgmcp.models.content import Content
 from pgmcp.models.mixin import IsContentableMixin
 
 
@@ -23,7 +25,7 @@ class ListingItem(IsContentableMixin, Base):
     }
 
     # == Columns ============================================================== 
-    listing_id    : Mapped[int] = mapped_column(nullable=False)
+    listing_id    : Mapped[int] = mapped_column(ForeignKey("listings.id"), nullable=False)
     position      : Mapped[int] = mapped_column(nullable=False, default=0)
     listable_type : Mapped[str] = mapped_column(nullable=False)
     listable_id   : Mapped[int] = mapped_column(nullable=False)

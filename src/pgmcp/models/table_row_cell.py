@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy import ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from pgmcp.models.base import Base
@@ -17,7 +18,7 @@ class TableRowCell(IsContentableMixin, Base):
     __tablename__ = "table_row_cells"
 
     # == Columns ============================================================== 
-    table_row_id  : Mapped[int]         = mapped_column(nullable=False)
+    table_row_id  : Mapped[int]         = mapped_column(ForeignKey("table_rows.id"), nullable=False)
     position      : Mapped[int]         = mapped_column(nullable=False, default=0)
     cell_content  : Mapped[str | None]  = mapped_column(nullable=True)
 

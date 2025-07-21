@@ -8,6 +8,7 @@ from typing import Any, Dict
 
 import aiofiles
 
+from bs4 import BeautifulSoup
 from httpx import AsyncClient, Response
 from rich.console import Console
 from rich.pretty import Pretty
@@ -178,14 +179,31 @@ def convert_html_to_markdown_content(
     return markdown_text
 
     
-def convert_markdown_to_markdown_document(markdown: str) -> MarkdownDocument:
+def convert_markdown_to_markdown_document(markdown: str, title: str | None = None) -> MarkdownDocument:
     """Converts a Markdown string to a deeply nested Document object."""
-    return MarkdownDocument.from_str(markdown)
+    return MarkdownDocument.from_str(markdown, title=title)
     
+def convert_html_to_markdown_document(html: str, title: str | None = None) -> MarkdownDocument:
+    md = convert_html_to_markdown_content(html)
+    doc = convert_markdown_to_markdown_document(md, title=title)
+    return doc
+
+async def convert_url_to_markdown_document(url: str) -> MarkdownDocument:
+    """
+    Fetches a URL and converts its HTML content to a MarkdownDocument.
     
+    Args:
+        url (str): The URL to fetch and convert.
     
-    
-    
+    Returns:
+        MarkdownDocument: The converted document.
+    """
+    response      = await fetch_url(url)
+    html          = response.text
+    soup          = BeautifulSoup(html, "html.parser")
+    title         = soup.title.string if soup.title else None
+    clean_html    = str(soup)
+    return convert_html_to_markdown_document(clean_html, title=title)
 
 async def amain():
     """

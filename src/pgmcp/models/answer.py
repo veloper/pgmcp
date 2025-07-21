@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pgvector.sqlalchemy import Vector
+from sqlalchemy import ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from pgmcp.models.base import Base
-from pgmcp.models.mixin import IsEmbeddableMixin
+from pgmcp.models.mixin import IsContentableMixin, IsEmbeddableMixin
 
 
 if TYPE_CHECKING:
@@ -19,8 +20,8 @@ class Answer(IsEmbeddableMixin, Base):
     __tablename__ = "answers"
     
     # == Columns ============================================================== 
-    content_id: Mapped[int] = mapped_column(nullable=False)
-    question_id: Mapped[int] = mapped_column(nullable=False)
+    content_id: Mapped[int] = mapped_column(ForeignKey("contents.id"), nullable=False)
+    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), nullable=False)
     
     text: Mapped[str] = mapped_column(nullable=False)
     

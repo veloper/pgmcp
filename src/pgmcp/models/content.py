@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy_utils import generic_relationship
 
 from pgmcp.models.base import Base
+from pgmcp.models.mixin import IsContentableMixin
 
 
 class Content(Base):

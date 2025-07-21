@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, List
 
+from sqlalchemy import ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from unstructured.documents.elements import Element
 from unstructured.partition.html import partition_html
 
 from pgmcp.models.base import Base
+from pgmcp.models.content import Content
 from pgmcp.models.mixin import IsContentableMixin
 
 
@@ -20,8 +22,8 @@ class Document(IsContentableMixin, Base):
     __tablename__ = "documents"
 
     # == Columns ============================================================== 
+    corpus_id: Mapped[int] = mapped_column(ForeignKey("corpora.id"), nullable=False)
     title: Mapped[str | None] = mapped_column(nullable=True)
-    corpus_id: Mapped[int] = mapped_column(nullable=False)
     
     # == Relationships ========================================================
     corpus: Mapped[Corpus] = relationship("Corpus", back_populates="documents")

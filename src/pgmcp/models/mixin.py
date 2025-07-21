@@ -1,9 +1,8 @@
 from typing import TYPE_CHECKING
 
 from pgvector.sqlalchemy import Vector
+from sqlalchemy import Integer, String, and_
 from sqlalchemy.orm import Mapped, declared_attr, mapped_column, relationship
-
-from pgmcp.models.content import Content
 
 
 if TYPE_CHECKING:
@@ -29,40 +28,45 @@ class IsContentableMixin:
     """
     Mixin for models that have_one Content association through a `contentable_type` and `contentable_id` field.
     
-    This introduces a `content` relationship that allows accessing the associated Content model. 
+    This provides the fields needed for the Content model's generic_relationship.
+    Access the content via the Content model's 'contentable' relationship rather than through this mixin.
     """
     @declared_attr
-    def content(cls) -> "Mapped[Content | None]":
-        return relationship(
-            back_populates="contentable",
-            primaryjoin="and_(IsContentableMixin.contentable_id == Content.id, "
-                        "IsContentableMixin.contentable_type == 'Content')"
-        )
+    def contentable_id(cls) -> Mapped[int | None]:
+        return mapped_column(Integer, nullable=True)
+    
+    @declared_attr
+    def contentable_type(cls) -> Mapped[str]:
+        return mapped_column(String, nullable=False)
 
 
 class IsSectionableMixin:
     """
     Mixin for models that have_one SectionItem association through a `sectionable_type` and `sectionable_id` field.
+    
+    This provides the fields needed for relationships. Consider adding explicit relationships 
+    in individual models if needed.
     """
     @declared_attr
-    def section_item(cls) -> "Mapped[SectionItem | None]":
-        return relationship(
-            back_populates="sectionable",
-            primaryjoin="and_(IsSectionableMixin.sectionable_id == SectionItem.id, "
-                        "IsSectionableMixin.sectionable_type == 'SectionItem')"
-        )
+    def sectionable_id(cls) -> Mapped[int | None]:
+        return mapped_column(Integer, nullable=True)
+    
+    @declared_attr
+    def sectionable_type(cls) -> Mapped[str]:
+        return mapped_column(String, nullable=False)
 
 
 class IsListableMixin:
     """
     Mixin for models that have_one ListingItem association through a `listable_type` and `listable_id` field.
 
-    This mixin introduces a `listable` relationship that allows accessing the associated ListingItem model.
+    This provides the fields needed for relationships. Consider adding explicit relationships 
+    in individual models if needed.
     """
     @declared_attr
-    def list_item(cls) -> "Mapped[ListingItem | None]":
-        return relationship(
-            back_populates="listable",
-            primaryjoin="and_(IsListableMixin.listing_itemable_id == ListingItem.id, "
-                        "IsListableMixin.listing_itemable_type == 'ListingItem')"
-        )
+    def listable_id(cls) -> Mapped[int | None]:
+        return mapped_column(Integer, nullable=True)
+    
+    @declared_attr
+    def listable_type(cls) -> Mapped[str]:
+        return mapped_column(String, nullable=False)

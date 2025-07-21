@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from sqlalchemy import ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
+from pgmcp.models.content import Content
+from pgmcp.models.mixin import IsContentableMixin  # Import for relationship resolution
+
 from .base import Base
-from .mixin import IsContentableMixin
 
 
 class Sentence(IsContentableMixin, Base):
@@ -11,7 +14,7 @@ class Sentence(IsContentableMixin, Base):
     __tablename__   = "sentences"
 
     # == Columns ============================================================== 
-    paragraph_id    : Mapped[int] = mapped_column(nullable=False)
+    paragraph_id    : Mapped[int] = mapped_column(ForeignKey("paragraphs.id"), nullable=False)
 
     # == Relationships ========================================================
 

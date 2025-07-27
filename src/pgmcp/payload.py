@@ -20,7 +20,9 @@ class PayloadMetadata(BaseModel):
         if error     := self.error    : output["error"]    = error
         if page      := self.page     : output["page"]     = page
         if per_page  := self.per_page : output["per_page"] = per_page
-        if count     := self.count    : output["count"]    = count
+        
+        
+        output["count"] = self.count or 0
         
         return output
 
@@ -34,23 +36,11 @@ class ModelDumpProtocol(Protocol):
 
 class Payload(BaseModel):
     """Generic payload structure for MCP responses."""
-    metadata: PayloadMetadata = Field(default_factory=PayloadMetadata, description="Metadata about this payload")
-    record: Dict[str, Any] = Field(default_factory=dict, description="Single record payload")
-    collection: List[Dict[str, Any]] = Field(default_factory=list, description="Collection of records payload")
+    metadata   : PayloadMetadata       = Field(default_factory=PayloadMetadata, description="Metadata about this payload")
+    record     : Dict[str, Any]        = Field(default_factory=dict, description="Single record payload")
+    collection : List[Dict[str, Any]]  = Field(default_factory=list, description="Collection of records payload")
 
-    def _to_record_dict(self, record: Union[ModelDumpProtocol, Dict[str, Any]]) -> Dict[str, Any]:
-        """Convert the record to a dictionary."""
-        if isinstance(record, ModelDumpProtocol):
-            return record.model_dump()
-        elif isinstance(record, dict):
-            return record
-        raise ValueError("Record must be a dict or implement ModelDumpProtocol")
-
-    def _to_collection_list(self, collection: Union[List[ModelDumpProtocol], List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-        """Convert the collection to a list of dictionaries."""
-        if isinstance(collection, list):
-            return [self._to_record_dict(item) for item in collection]
-        raise ValueError("Each item in collection must be a dict or implement ModelDumpProtocol")
+    
 
     @model_serializer
     def model_serialize(self) -> Dict[str, Union[str, Dict[str, Any], List[Dict[str, Any]]]]:
@@ -62,10 +52,10 @@ class Payload(BaseModel):
         }
 
         if record := self.record:
-            output["record"] = self._to_record_dict(record)
+            output["record"] = record
 
         if (collection := self.collection) and isinstance(collection, list):
-            output["collection"] = self._to_collection_list(collection)
+            output["collection"] = self.collection
 
         # remove empty collections or records
         if not output["record"]:
@@ -94,7 +84,23 @@ class Payload(BaseModel):
             count=count
         )
 
+        # Convert ModelDumpProtocol(s) to dict(s) before passing to the class
         if isinstance(record_or_collection, list):
-            return cls( metadata=meta, collection=record_or_collection ) # type: ignore
+            collection = [
+                item.model_dump() if isinstance(item, ModelDumpProtocol) else item
+                for item in record_or_collection
+            ]
+            return cls.model_validate({
+                "metadata": meta.model_dump(),
+                "collection": collection
+            })
         else:
-            return cls( metadata=meta, record=record_or_collection ) # type: ignore
+            record = (
+                record_or_collection.model_dump()
+                if isinstance(record_or_collection, ModelDumpProtocol)
+                else record_or_collection
+            )
+            return cls.model_validate({
+                "metadata": meta.model_dump(),
+                "record": record
+            })

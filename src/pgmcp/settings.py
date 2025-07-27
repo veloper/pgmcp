@@ -5,14 +5,11 @@ Supports .env files, environment variables, and runtime validation with DSN-base
 
 
 
-from contextlib import asynccontextmanager
-from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List
+from typing import Any, Dict, List
 
-from pydantic import BaseModel, Field, PrivateAttr, field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from pgmcp.database_connection_settings import DatabaseConnectionSettings
 from pgmcp.environment import Environment
@@ -25,6 +22,15 @@ class AppSettings(BaseSettings):
     """Main application configuration."""
 
     log_level: str = Field(default="INFO", description="Logging level", pattern=r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
+    root_path: Path = Field(default=ROOT_PATH, description="Root path of the application")
+    
+    @property
+    def src_path(self) -> Path: return self.root_path / "src"
+    
+    @property
+    def package_path(self) -> Path: return self.src_path / "pgmcp"
+        
+        
     
 class DbSettings(BaseSettings):
 
@@ -38,6 +44,12 @@ class DbSettings(BaseSettings):
         raise ValueError("Primary database connection is not defined or is invalid.")
     
     
+    def get_primary_sync(self) -> DatabaseConnectionSettings:
+        """Get the primary database connection settings for synchronous operations."""
+        if primary_sync := self.connections.get("primary_sync", None):
+            return primary_sync
+        raise ValueError("Primary synchronous database connection is not defined or is invalid.")
+    
     # Remove explicit close method; add lazy pool recreation in pool property
     @field_validator('connections', mode='before')
     @classmethod
@@ -48,6 +60,10 @@ class DbSettings(BaseSettings):
         DB__CONNECTIONS='{
             "primary": {
                 "dsn": "postgresql://postgres@localhost:5432/postgres",
+                "echo": true
+            },
+            "primary_sync": {
+                "dsn": "postgresql+psycopg://postgres@localhost:5432/postgres",
                 "echo": true
             }
         }'
@@ -118,7 +134,7 @@ class Settings(BaseSettings):
     """Complete application settings with multi-database support."""
     
     model_config = SettingsConfigDict(
-        env_file=(ENV_FILE_PATH),
+        env_file=(ENV_FILE_PATH), # you are here trying to figure out why this is not as expected even with the singleton of environment being confirmed set to testing
         env_file_encoding='utf-8',
         env_nested_delimiter='__',
     )
@@ -127,15 +143,35 @@ class Settings(BaseSettings):
     db: DbSettings
     age: AgeSettings
     vectorize: VectorizeSettings
+    env: Environment = Field(default_factory=Environment.current, description="Current application environment")
     
     def primary_database(self) -> DatabaseConnectionSettings:
         """Retrieve the primary database connection settings."""
         return self.db.get_primary()
     
+class _SettingsTesting(Settings):
+    """Settings for testing environment."""
     
+    model_config = SettingsConfigDict(
+        env_file=(ROOT_PATH / '.env.testing'),
+        env_file_encoding='utf-8',
+        env_nested_delimiter='__',
+    )
+    env: Environment = Field(default_factory=lambda: Environment("testing"), description="Current application environment")
+
+class _SettingsDevelopment(Settings):
+    """Settings for development environment."""
+    
+    model_config = SettingsConfigDict(
+        env_file=(ROOT_PATH / '.env'),
+        env_file_encoding='utf-8',
+        env_nested_delimiter='__',
+    )
+    env: Environment = Field(default_factory=lambda: Environment("development"), description="Current application environment")
+
 
 # Global settings singleton
-SETTINGS: Settings | None = None
+SETTINGS: Dict[Environment,Settings] = {}
 
 def get_settings() -> Settings:
     """Retrieve the global settings singleton with lazy environment configuration.
@@ -161,15 +197,23 @@ def get_settings() -> Settings:
         Environment must be set before first call to take effect. Subsequent calls
         return the cached instance regardless of environment changes.
     """
+    current_env = Environment.current()
     global SETTINGS
-    if SETTINGS is None:
-        # Configure Pydantic settings based on current runtime environment
-        # Settings.model_config = SettingsConfigDict(
-        #     env_file=Environment.get_dotenv_filename(),
-        #     env_file_encoding='utf-8',
-        #     env_nested_delimiter='__',
-        # )
-        SETTINGS = Settings()  # pyright: ignore
-        
-    return SETTINGS
+    if SETTINGS.get(current_env, None) is None:
+        if current_env.is_production():
+            raise ValueError("Production environment is not supported yet.")
+        elif current_env.is_staging():
+            raise ValueError("Staging environment is not supported yet.")
+        elif current_env.is_testing():
+            SETTINGS[Environment.TESTING] = _SettingsTesting()  # pyright: ignore
+        elif current_env.is_development():
+            SETTINGS[Environment.DEVELOPMENT] = _SettingsDevelopment()  # pyright: ignore
+        else:
+            raise ValueError(f"Unsupported environment: {current_env.value}. Please set the environment to 'testing' or 'development'.")
+
+    settings = SETTINGS.get(current_env, None)
+    if settings is None:
+        raise ValueError(f"Settings for environment {current_env.value} are not initialized.")
+
+    return settings
 

@@ -1,7 +1,8 @@
 from typing import TYPE_CHECKING, Any, Callable, Dict, Generic, List, Literal, Optional, Type, TypeVar, Union, overload
 
 from sqlalchemy import and_, asc, desc, distinct, func, or_, select, text
-from sqlalchemy.orm import joinedload, selectinload, subqueryload
+from sqlalchemy.orm import InstrumentedAttribute, joinedload, selectinload, subqueryload
+from sqlalchemy.sql.expression import TextClause
 from sqlalchemy.sql.selectable import Select
 
 
@@ -14,6 +15,7 @@ class QueryBuilder(Generic[T]):
     def __init__(self, model: Type[T]):
         self.model = model
         self._stmt = select(model)
+        self._stmt.select_from(model.__table__)
         self._distinct_value = False
         self._order_clauses: List[Any] = []  # Track order clauses for reverse_order
         self._custom_select_used = False  # Track if custom select is used
@@ -23,27 +25,85 @@ class QueryBuilder(Generic[T]):
     # ==================================
 
     def where(self, *args, **kwargs) -> "QueryBuilder[T]":
-        """Rails: Model.where(condition)"""
-        if args and kwargs:
-            # Combine args and kwargs with AND
-            conditions = list(args)
-            for key, value in kwargs.items():
-                attr = getattr(self.model, key)
-                conditions.append(attr == value)
-            self._stmt = self._stmt.filter(and_(*conditions))
-        elif args:
-            self._stmt = self._stmt.filter(*args)
-        elif kwargs:
-            conditions = []
+        """
+        Filter the query with the given conditions.
+
+        Allowed signatures:
+        1. where(expr1, expr2, ...)
+            - Each positional argument is a SQLAlchemy expression or a raw SQL string (auto-wrapped with text()).
+            - All expressions are combined with AND.
+        2. where(field1=val1, field2=val2, ...)
+            - Each keyword argument is a field-value pair.
+            - If value is a list/tuple, uses `field.in_(value)`.
+            - If value is None, uses `field.is_(None)`.
+            - Otherwise, uses `field == value`.
+            - All conditions are combined with AND.
+        3. where(expr1, field1=val1, ...)
+            - Combines both positional expressions and keyword conditions with AND.
+            - Keyword conditions use `field == value`.
+        4. where()
+            - No-op, returns self.
+        5. where("raw sql")
+            - Pass a raw SQL string, which will be auto-wrapped with sqlalchemy.text().
+        6. where("raw_sql = :name", name=value)
+            - Raw SQL with named parameters using :name placeholders.
+        7. where(column, operator, value)
+            - Combines a column, an operator, and a value.
+
+        Returns:
+            QueryBuilder: The QueryBuilder instance for chaining.
+        """
+        from sqlalchemy import text
+
+        def as_raw_sql(string: str) -> TextClause:
+            return text(string)
+        
+        def as_instrumented_attr(unknown: str | InstrumentedAttribute) -> InstrumentedAttribute | None:
+            """Coerce a string or existing InstrumentedAttribute to an InstrumentedAttribute, only if valid on the model"""
+            if isinstance(unknown, InstrumentedAttribute):
+                return unknown
+            if isinstance(unknown, str) and hasattr(self.model, unknown):
+                return getattr(self.model, unknown, None)
+            return None
+
+        # Signature 7: where(column, operator, value)
+        if len(args) == 3 and not kwargs and (attr := as_instrumented_attr(args[0])):
+            _, operator, value = args
+            expr = attr.op(operator)(value)
+            self._stmt = self._stmt.filter(expr)
+            
+
+        # Signature 6: where("raw_sql = :name", name=value)
+        if (args and isinstance(args[0], str) and kwargs):
+            if any(f":{key}" in args[0] for key in kwargs.keys()): # this is key to recognizing this signature
+                self._stmt = self._stmt.filter(as_raw_sql(args[0]).bindparams(**kwargs))
+                return self
+
+        # Combined signatures:
+        # Signature 1: where(expr1, expr2, ...)               - Positional
+        # Signature 2: where(field1=val1, field2=val2, ...)   - Keyword
+        # Signature 3: where(expr1, field1=val1, ...)         - Mix
+        # Signature 5: where("raw sql")
+        if args or kwargs:
+            expressions = []
+            for arg in args:
+                expressions.append(as_raw_sql(arg) if isinstance(arg, str) else arg)
+
+            # kwargs is unordered in python so if you want to take advantage of
+            # of compound indices, you should use positional arguments
             for key, value in kwargs.items():
                 attr = getattr(self.model, key)
                 if isinstance(value, (list, tuple)):
-                    conditions.append(attr.in_(value))
+                    expressions.append(attr.in_(value)) # auto-wraps lists/tuples to make IN queries
                 elif value is None:
-                    conditions.append(attr.is_(None))
+                    expressions.append(attr.is_(None)) # handles None values for IS NULL checks
                 else:
-                    conditions.append(attr == value)
-            self._stmt = self._stmt.filter(and_(*conditions))
+                    expressions.append(attr == value) # defaults to equality check
+            
+            self._stmt = self._stmt.filter(and_(*expressions))
+
+
+        # Signature 4: where() - Noop
         return self
 
     def or_where(self, *args, **kwargs) -> "QueryBuilder[T]":
@@ -262,7 +322,7 @@ class QueryBuilder(Generic[T]):
         if hasattr(self._stmt, 'with_only_columns'):
             # Use with_only_columns to replace the selected columns
             try:
-                self._stmt = self._stmt.with_only_columns(*select_items)
+                self._stmt = self._stmt.with_only_columns(*select_items, maintain_column_froms=True)
             except Exception as e:
                 # Fallback - rebuild the statement from scratch to preserve joins
                 base_stmt = select(*select_items).select_from(self._stmt.get_final_froms()[0])
@@ -401,9 +461,6 @@ class QueryBuilder(Generic[T]):
         # For now, return a fresh query builder
         return QueryBuilder(self.model)
 
-    # ==================================
-    # Execution Methods (Rails Finders)
-    # ==================================
 
     def rehydrate_model_from_row(self, row_dict: Dict[str, Any]) -> T:
         """Rehydrate a model instance from raw row data, setting model fields directly and storing extras for dict access."""
@@ -421,9 +478,13 @@ class QueryBuilder(Generic[T]):
         
         # Store extra data for dict-style access
         if extra_data:
-            model_instance._row_data = row_dict  # type: ignore
-        
+            model_instance.additional_fields = extra_data 
+
         return model_instance
+
+    # ==================================
+    # Execution Methods (Rails Finders)
+    # ==================================
 
     async def all(self) -> List[T]:
         """Rails: Model.all"""
@@ -528,9 +589,14 @@ class QueryBuilder(Generic[T]):
                 # Normal query without custom select
                 return list(result.scalars().all())
 
-    async def first(self, n: Optional[int] = None) -> Union[Optional[T], List[T]]:
+    @overload
+    async def first(self, n: int) -> List[T]: ...
+    @overload
+    async def first(self) -> Optional[T]: ...
+    async def first(self, *args, **kwargs) -> Optional[T] | List[T]:
         """Rails: Model.first or Model.first(n)"""
-        if n is not None:
+        if len(args) == 1 and isinstance(args[0], int):
+            n = args[0]
             stmt = self._stmt.limit(n)
             async with self.model.async_session() as session:
                 result = await session.execute(stmt)
@@ -540,7 +606,11 @@ class QueryBuilder(Generic[T]):
                 result = await session.execute(self._stmt)
                 return result.scalars().first()
 
-    async def last(self, n: Optional[int] = None) -> Union[Optional[T], List[T]]:
+    @overload
+    async def last(self, n: int) -> List[T]: ...
+    @overload
+    async def last(self) -> Optional[T]: ...
+    async def last(self, n: Optional[int] = None) -> Optional[T] | List[T]:
         """Rails: Model.last or Model.last(n)"""
         # Create a copy of the current builder and reverse its order
         reversed_builder = QueryBuilder(self.model)
@@ -648,9 +718,9 @@ class QueryBuilder(Generic[T]):
         """Rails: Model.count or Model.count(:column)"""
         if column:
             col_attr = getattr(self.model, column)
-            count_stmt = self._stmt.with_only_columns(func.count(col_attr))
+            count_stmt = self._stmt.with_only_columns(func.count(col_attr), maintain_column_froms=True)
         else:
-            count_stmt = self._stmt.with_only_columns(func.count())
+            count_stmt = self._stmt.with_only_columns(func.count(), maintain_column_froms=True)
         
         async with self.model.async_session() as session:
             result = await session.execute(count_stmt)
@@ -681,7 +751,7 @@ class QueryBuilder(Generic[T]):
     async def sum(self, column: str) -> Union[int, float]:
         """Rails: Model.sum(:column)"""
         col_attr = getattr(self.model, column)
-        sum_stmt = self._stmt.with_only_columns(func.sum(col_attr))
+        sum_stmt = self._stmt.with_only_columns(func.sum(col_attr), maintain_column_froms=True)
         async with self.model.async_session() as session:
             result = await session.execute(sum_stmt)
             return result.scalar() or 0
@@ -689,7 +759,7 @@ class QueryBuilder(Generic[T]):
     async def average(self, column: str) -> Optional[float]:
         """Rails: Model.average(:column)"""
         col_attr = getattr(self.model, column)
-        avg_stmt = self._stmt.with_only_columns(func.avg(col_attr))
+        avg_stmt = self._stmt.with_only_columns(func.avg(col_attr), maintain_column_froms=True)
         async with self.model.async_session() as session:
             result = await session.execute(avg_stmt)
             return result.scalar()
@@ -697,7 +767,7 @@ class QueryBuilder(Generic[T]):
     async def minimum(self, column: str) -> Any:
         """Rails: Model.minimum(:column)"""
         col_attr = getattr(self.model, column)
-        min_stmt = self._stmt.with_only_columns(func.min(col_attr))
+        min_stmt = self._stmt.with_only_columns(func.min(col_attr), maintain_column_froms=True)
         async with self.model.async_session() as session:
             result = await session.execute(min_stmt)
             return result.scalar()
@@ -705,7 +775,7 @@ class QueryBuilder(Generic[T]):
     async def maximum(self, column: str) -> Any:
         """Rails: Model.maximum(:column)"""
         col_attr = getattr(self.model, column)
-        max_stmt = self._stmt.with_only_columns(func.max(col_attr))
+        max_stmt = self._stmt.with_only_columns(func.max(col_attr), maintain_column_froms=True)
         async with self.model.async_session() as session:
             result = await session.execute(max_stmt)
             return result.scalar()
@@ -723,12 +793,12 @@ class QueryBuilder(Generic[T]):
                 col_attrs.append(col)
         
         if len(col_attrs) == 1:
-            stmt = self._stmt.with_only_columns(col_attrs[0])
+            stmt = self._stmt.with_only_columns(col_attrs[0], maintain_column_froms=True)
             async with self.model.async_session() as session:
                 result = await session.execute(stmt)
                 return [row[0] for row in result.all()]
         else:
-            stmt = self._stmt.with_only_columns(*col_attrs)
+            stmt = self._stmt.with_only_columns(*col_attrs, maintain_column_froms=True)
             async with self.model.async_session() as session:
                 result = await session.execute(stmt)
                 return [tuple(row) for row in result.all()]

@@ -9,15 +9,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from pgmcp.models.base import Base
 from pgmcp.models.crawl_log import CrawlLog
-from pgmcp.models.mixin import IsEmbeddableMixin
+
+from .log_level import LogLevel
 
 
 if TYPE_CHECKING:
-    from pgmcp.models.content import Content
     from pgmcp.models.crawl_job import CrawlJob
-    from pgmcp.models.crawl_log import LogLevel
-    from pgmcp.models.question import Question
-    from pgmcp.scrapy.item import Item
 
 class CrawlItem(Base):
     """Represents a web crawling job."""
@@ -47,11 +44,11 @@ class CrawlItem(Base):
     
     async def log(self, message: str, level: LogLevel | None = None, context: Dict[str, Any] | None = None) -> CrawlLog:
         """Create and save a log entry for this crawl item."""
-        from pgmcp.models.crawl_log import CrawlLog, LogLevel
+        from pgmcp.models.crawl_log import CrawlLog
         
         if level is None:
-            level = LogLevel.INFO
-            
+            level = LogLevel.INFO  # Default to INFO if no level is provided
+
         log_entry = CrawlLog.from_crawl_item(
             crawl_item=self,
             message=message,
@@ -66,3 +63,4 @@ class CrawlItem(Base):
     async def debug(self, message: str, context: Dict[str, Any] | None = None) -> None: await self.log(message, level=LogLevel.DEBUG, context=context)
     async def warning(self, message: str, context: Dict[str, Any] | None = None) -> None: await self.log(message, level=LogLevel.WARNING, context=context)
     async def error(self, message: str, context: Dict[str, Any] | None = None) -> None: await self.log(message, level=LogLevel.ERROR, context=context)
+    async def critical(self, message: str, context: Dict[str, Any] | None = None) -> None: await self.log(message, level=LogLevel.CRITICAL, context=context)

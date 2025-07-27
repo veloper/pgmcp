@@ -4,12 +4,14 @@ from asyncio import run
 from copy import deepcopy
 from functools import reduce
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 import aiofiles
 
 from bs4 import BeautifulSoup
+from fastmcp.client.sampling import SamplingMessage
 from httpx import AsyncClient, Response
+from mcp.types import PromptMessage, TextContent
 from rich.console import Console
 from rich.pretty import Pretty
 
@@ -177,8 +179,9 @@ def convert_html_to_markdown_content(
     markdown_text = converter.convert(clean_html)
     
     return markdown_text
+           
+            
 
-    
 def convert_markdown_to_markdown_document(markdown: str, title: str | None = None) -> MarkdownDocument:
     """Converts a Markdown string to a deeply nested Document object."""
     return MarkdownDocument.from_str(markdown, title=title)
@@ -187,6 +190,19 @@ def convert_html_to_markdown_document(html: str, title: str | None = None) -> Ma
     md = convert_html_to_markdown_content(html)
     doc = convert_markdown_to_markdown_document(md, title=title)
     return doc
+
+def convert_sample_message_from_prompt_message(prompt_message: PromptMessage) -> SamplingMessage:
+    """Convert a PromptMessage to a SamplingMessage."""
+    if not isinstance(prompt_message, PromptMessage):
+        raise ValueError(f"Expected PromptMessage, got {type(prompt_message)}")
+    content = str(prompt_message.content)
+    if not content:
+        raise ValueError("PromptMessage content cannot be empty.")
+    if not prompt_message.role:
+        raise ValueError("PromptMessage role cannot be empty.")
+    content = cast(TextContent, prompt_message.content)
+    return SamplingMessage(role=prompt_message.role, content=content)
+
 
 async def convert_url_to_markdown_document(url: str) -> MarkdownDocument:
     """

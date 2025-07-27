@@ -1,6 +1,3 @@
-
-
-
 from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field, model_serializer
@@ -445,16 +442,6 @@ class CustomScrapySettings(ScrapySettings):
     
     USER_AGENT: str = Field(default='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36')
 
-    SPIDER_MIDDLEWARES : Dict[str, int] = Field(default_factory=lambda: {
-        'scrapy_magicfields.MagicFieldsMiddleware': 100,
-    })
-    
-    MAGIC_FIELDS: Dict[str, str] = Field(default_factory=lambda: {
-        'job_id'           : "$jobid",
-        'response_url'     : "$response:url",
-        'response_status'  : "$response:status",
-        'response_headers' : "$response:headers",
-        'timestamp'        : "$unixtime"
-    })
+    SPIDER_MIDDLEWARES : Dict[str, int] = Field(default_factory=dict)
 
 

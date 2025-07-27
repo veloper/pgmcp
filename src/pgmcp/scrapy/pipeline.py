@@ -2,9 +2,13 @@ import re
 
 from typing import Awaitable, Callable
 
-from pgmcp.models.crawl_item import CrawlItem
+from scrapy import signals
+
 from pgmcp.scrapy.item import Item
+from pgmcp.scrapy.models.base import Self
+from pgmcp.scrapy.models.crawl_item import CrawlItem
 from pgmcp.scrapy.spider import Spider
+from pgmcp.scrapy.spider_closed_reason import SpiderClosedReason
 
 
 class Pipeline:
@@ -12,14 +16,17 @@ class Pipeline:
 
     # == Custom Pipeline Methods (prefixed for deterministic ordering of map execution)
 
-    async def _0001_update_job_item_logs(self, item: Item, spider: Spider) -> Item:
-        await item.info("Starting pipeline processing")
+    def _0001_update_job_item_logs(self, item: Item, spider: Spider) -> Item:
+        with CrawlItem.session_context():
+            item.info("Starting pipeline processing")
+        
         return item
 
 
-    async def _0002_update_job_item_record_with_request_and_response_info(self, item: Item, spider: Spider) -> Item:
-        await item.info("Updating with request and response info")
-        await item.sync_to_db()
+    def _0002_update_job_item_record_with_request_and_response_info(self, item: Item, spider: Spider) -> Item:
+        with CrawlItem.session_context():
+            item.info("Saving item to database")
+            item.sync_to_db()
         return item
     
     
@@ -30,34 +37,50 @@ class Pipeline:
         """Hook called by Scrapy to create pipeline instance."""
         return cls()
 
-    async def open_spider(self, spider: Spider):
-        """Hook called when spider is opened - setup/initialization."""
-        await spider.job.info("Spider opened")
-
-    async def process_item(self, item : Item, spider: Spider) -> Item:
-        """Hook called for every scraped item - main processing method."""
-        return await self._run_pipeline_over_item(item, spider)
-
-    async def close_spider(self, spider: Spider):
+    
+    def open_spider(self, spider: Spider):
+        """Hook called when spider is opened - initialization."""
+        pass
+    
+    def close_spider(self, spider: Spider):
         """Hook called when spider is closed - cleanup/finalization."""
-        await spider.job.info("Spider closed")  
-        
+        pass
+    
+    def process_item(self, item : Item, spider: Spider) -> Item:
+        """Hook called for every scraped item - main processing method."""
+        return self._run_pipeline_over_item(item, spider)
 
-    
-    
     # == Internal Methods =====================================================
 
-    async def _run_pipeline_over_item(self, item: Item, spider: Spider) -> Item:
+    def get_scheduler_pending_size(self, spider: Spider) -> int:
+        """Get the size of the scheduler's pending queue."""
+        scheduler = getattr(getattr(getattr(spider, "crawler", None), "engine", None), "slot", None)
+        if scheduler and hasattr(scheduler, "scheduler"):
+            queue = getattr(scheduler.scheduler, "pending", None)
+            if queue is not None:
+                return len(queue)
+        return 0
+    
+    def get_scheduler_processed_size(self, spider: Spider) -> int:
+        """Get the size of the scheduler's processed queue."""
+        scheduler = getattr(getattr(getattr(spider, "crawler", None), "engine", None), "slot", None)
+        if scheduler and hasattr(scheduler, "scheduler"):
+            queue = getattr(scheduler.scheduler, "processed", None)
+            if queue is not None:
+                return len(queue)
+        return 0
+
+    def _run_pipeline_over_item(self, item: Item, spider: Spider) -> Item:
         """Run the pipeline functions over the item based on their numeric prefix ascending order."""
         pipeline_functions = self._get_ordered_pipeline_callables()
         
         for pipeline_func in pipeline_functions:
-            item = await pipeline_func(item, spider)
+            item = pipeline_func(item, spider)
             
         return item
     
     
-    def _get_ordered_pipeline_callables(self) -> list[Callable[[Item, Spider], Awaitable[Item]]]:
+    def _get_ordered_pipeline_callables(self) -> list[Callable[[Item, Spider], Item]]:
         """Get ordered list of pipeline callable methods based on their numeric prefix."""
         methods = [method for method in dir(self) if re.match(r"^_[0-9]{4}_.+?$", method)]
         methods.sort(key=lambda method: int(method.split("_")[1])) 

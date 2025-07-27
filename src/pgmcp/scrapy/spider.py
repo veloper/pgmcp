@@ -1,5 +1,8 @@
-from collections.abc import AsyncGenerator, Generator
-from typing import Any, Dict, Optional
+from __future__ import annotations
+
+import re
+
+from typing import Any, Dict, Generator, Optional
 
 import scrapy
 
@@ -14,14 +17,7 @@ from pgmcp.scrapy.job import Job
 class Spider(CrawlSpider):
     name = "pgmcp_spider"
     
-    custom_settings = {
-        'DEPTH_LIMIT': 3,           # Limit crawl depth to prevent infinite crawling
-        'ROBOTSTXT_OBEY': False,    # Disable robots.txt for testing
-        'DOWNLOAD_DELAY': 0.5,      # Be respectful with delays
-        'ITEM_PIPELINES': {
-            'pgmcp.scrapy.spider.Pipeline': 300
-        }
-    }
+    custom_settings = {}
     
     rules = (
         Rule(LinkExtractor(), callback="parse_item", follow=True),
@@ -35,11 +31,34 @@ class Spider(CrawlSpider):
 
     def __init__(self, job: Job, *args, **kwargs):
         self.job = job
+        
+        # Populate the start_urls        
+        if not job.start_urls:
+            raise ValueError("Job must have at least one start URL.")
         self.start_urls = job.start_urls
+        
+        # Populate the allowed_domains
         self.allowed_domains = job.allowed_domains
+        
 
-
+        # Populate AND UPDATE the settings (requires special update_settings method call)
         self.__class__.update_settings(job.to_base_settings())
+
+        # Populate Boilerplate Patterns
+        self.boilerplate_patterns = [
+            r"terms.+?service", 
+            r"sign.?up", 
+            r"sign.?in", 
+            r"(un)?subscribe",
+            r"log.?in", 
+            r"log.?out"
+        ]
+        self.boilerplate_substrings = [
+            "about", "advertising", "blog", "careers", "contact", "cookie",
+            "disclaimer", "help", "imprint", "impress", "jobs", "legal",
+            "media", "news", "policy", "press", "privacy", "register",
+            "license", "mailto:", "javascript:", "#"
+        ]
 
         super().__init__(*args, **kwargs)
 
@@ -48,16 +67,44 @@ class Spider(CrawlSpider):
     def update_settings(cls, settings) -> None:
         super().update_settings(settings)
 
-    async def parse_item(self, response) -> AsyncGenerator[Item|scrapy.Request, None]:
+    def is_url_boilerplate(self, url: str) -> bool:
+        """Check if a URL matches any boilerplate patterns."""
+        for pattern in self.boilerplate_patterns:
+            if re.search(pattern, url, re.IGNORECASE):
+                return True
+        for substring in self.boilerplate_substrings:
+            if substring in url:
+                return True
+        return False
+
+
+    def extract_followable_links(self, response) -> list[str]:
+        """Extracts links from the response that are followable by the spider."""
+        
+        # Use XPath to extract all anchor tags' href attributes
+        discovered_links = response.xpath("//a/@href").getall()
+        
+        followable_links = [
+            link for link in discovered_links if link and not self.is_url_boilerplate(link)
+        ]
+        
+        return followable_links
+        
+    
+    def parse_item(self, response) -> Generator[Item|scrapy.Request, None]:
         """This method is called for each response, and it the job of it to create and yield items, and extract links to follow."""
         
         self.logger.debug(f"Parsing response from {response.url}")
         
+        # Utility: Remove NUL bytes from response text
+        def strip_nul_bytes(text: str) -> str:
+            return text.replace('\x00', '')
+        
         # ITEMS - Create and log new item creation
         
         item = Item(
-            job_id=self.job.id,
-            body=response.text,
+            crawl_job_id=self.job.id,  
+            body=strip_nul_bytes(response.text),
             url=response.url,
             status=response.status,
             request_headers=dict(response.request.headers),
@@ -70,32 +117,25 @@ class Spider(CrawlSpider):
         
         yield item
         
-        # FOLLOW LINKS - Adding Metadata for depth and referer
-        
-        discovered_links = response.xpath("//a/@href").getall()
+        followable_links = self.extract_followable_links(response)
         
         # Log link discovery
-        if discovered_links:
-            await self.job.info(f"Discovered {len(discovered_links)} links from {response.url} at depth {response.meta.get('depth', 0)}")
+        if followable_links:
+            self.job.info(f"Discovered {len(followable_links)} followable links from {response.url} at depth {response.meta.get('depth', 0)}")
 
-        for href in discovered_links:
+        for href in followable_links:
             full_url = response.urljoin(href)
             request = scrapy.Request(full_url, self.parse_item)
             request.meta['referer'] = response.url
             request.meta['depth'] = response.meta.get('depth', 0) + 1
-            
-            # Log each new request being queued
-            self.logger.debug(f"Queuing new request: {full_url} (depth: {request.meta['depth']})")
-            
+            # Queue the request            
             yield request
 
-        
-        
 
-    async def parse_start_url(self, response):
+    def parse_start_url(self, response):
         """This is the very start of the crawl, where we process the initial URL.
         and yield items and requests from it.
         """
-        self.logger.info(f"Parsing start URL: {response.url}")
-        async for item_or_request in self.parse_item(response):
+        self.logger.info(f"Parsing start URLs: {response.url}")
+        for item_or_request in self.parse_item(response):
             yield item_or_request

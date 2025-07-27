@@ -1,119 +1,122 @@
-from typing import TYPE_CHECKING, Any, Dict, List, Self
+import asyncio, json
+
+from pathlib import Path
+from sys import stderr, stdout
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Self
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 from scrapy.crawler import CrawlerProcess
 from scrapy.settings import SETTINGS_PRIORITIES, BaseSettings
 
-from pgmcp.models.crawl_job import CrawlJob, CrawlJobStatus
+from pgmcp.scrapy.models.crawl_job import CrawlJob, CrawlJobStatus
+from pgmcp.scrapy.models.log_level import LogLevel
 from pgmcp.scrapy.settings import CustomSettings, Settings
+from pgmcp.settings import get_settings
 
 
 if TYPE_CHECKING:
     from pgmcp.scrapy.spider import Spider
 
+_settings = get_settings()
 
 class Job(BaseModel):
-    """Represents a web scraping job configuration."""
+    """Represents a web scraping job configuration decoupled from the database."""
+    
+    id              : int                  = Field(description="Unique identifier for the job")
     start_urls      : List[str]            = Field(default_factory=list, description="Initial URLs to start crawling")
     settings        : Settings             = Field(default_factory=CustomSettings, description="Custom settings for the spider")
     allowed_domains : List[str]            = Field(default_factory=list, description="Domains to restrict crawling to")
-    id              : int | None           = Field(default=None, description="Unique identifier for the job")
     
 
     @field_validator("settings" , mode="before")
     @classmethod
     def validate_settings(cls, value: dict[str, Any]) -> Settings:
-        # coerce to CustomScrapySettings
+        # Coerce to CustomScrapySettings
         return CustomSettings.model_validate(value)
 
-    async def transition_to_running(self) -> None:
-        """Run the spider with the provided configuration."""
-        from pgmcp.scrapy.spider import Spider
+    def reload(self) -> None:
+        crawl_job_model = self.crawl_job_model()
+        if crawl_job_model:
+            self.start_urls = crawl_job_model.start_urls
+            self.allowed_domains = crawl_job_model.allowed_domains
+            self.settings = CustomSettings.model_validate(crawl_job_model.settings)
 
-        job = await self.get_or_create_crawl_job()
-        process = CrawlerProcess(settings=self.settings.model_dump())
+    async def run(self, background: bool = False) -> None:
+        """Run the spider with the provided configuration in the background.
 
-        process.crawl(Spider, job=self)
+        Done via a subprocess to avoid the hassle of asyncio conflicts.
+        """
+        root_path         : Path = _settings.app.root_path
+        pkg_path          : Path = _settings.app.package_path.resolve()
+        executable_path   : Path = pkg_path / "scrapy" / "cli.py"
+        working_dir_path  : Path = root_path
         
-        process.start()  # This will block until the crawling is finished
+        python_executable : Path = root_path / ".venv" / "bin" / "python"
 
-    async def pause(self) -> None:
-        """Pause the job if supported by the spider."""
-        # Implementation depends on how the spider handles pausing
-        pass
+        
+        if not executable_path.exists():
+            raise FileNotFoundError(f"Scrapy executable not found at {executable_path}")
+        cmd = [str(python_executable), str(executable_path), "run", str(self.id)]
+        
+        if background:
+            cmd.append("--detach")
+        
+        proc = await asyncio.create_subprocess_exec( *cmd, cwd=working_dir_path, stdout=stdout, stderr=stderr )
 
-    async def get_crawl_job(self) -> CrawlJob | None:
+        if background:
+            asyncio.create_task(proc.wait())
+        else:
+            await proc.wait()
+
+    async def run_with_polling_loop(self, coro: Callable[[Self, Dict[str, Any]], Awaitable[None]], interval: int) -> None:
+        """Same as run, but you can provide an async coro that will be called every x milliseconds."""
+        memo = {}
+        async def polling_loop():
+            try:
+                while True:
+                    await coro(self, memo) # externally bound memo dict
+                    await asyncio.sleep(float(interval / 1000))
+            except asyncio.CancelledError:
+                pass # complete
+                
+        polling_task = asyncio.create_task(polling_loop())
+        running_task = asyncio.create_task(self.run(background=False))
+        
+        # wait for the running task to complete
+        await running_task
+        # cancel the polling task
+        polling_task.cancel()
+        try:
+            await polling_task # wait for it to finish
+        except asyncio.CancelledError:
+            pass
+
+    def crawl_job_model(self) -> CrawlJob:
         """Get the CrawlJob instance associated with this job."""
-        from pgmcp.models.crawl_job import CrawlJob
-        if self.id:
-            return await CrawlJob.find(self.id)
-        return None
+        from pgmcp.scrapy.models.crawl_job import CrawlJob
+        if model := CrawlJob.find(self.id):
+            return model
+        raise ValueError(f"CrawlJob with id {self.id} not found.")
 
-    async def get_or_create_crawl_job(self) -> CrawlJob | None:
-        """Get the CrawlJob instance or create a new one if it doesn't exist."""
-        crawl_job = await self.get_crawl_job()
-        if not crawl_job:
-            crawl_job = CrawlJob(
-                start_urls=self.start_urls,
-                allowed_domains= self.allowed_domains,
-                settings= self.settings.model_dump()
-            )
-            await crawl_job.save()
-            self.id = crawl_job.id  # Update the job ID after creation
-        
-        return crawl_job
-    
-    async def log(self, message: str, level: str = "INFO", context: Dict[str, Any] | None = None) -> None:
-        """Log a message related to this item and job it's associated with."""
-        if crawl_job := await self.get_or_create_crawl_job():
-            await crawl_job.log(message, level=level, context=context)
-        raise ValueError("Unable to create or find CrawlJob instance to log message.")
-            
 
-    async def info(self, message: str, context: Dict[str, Any] | None = None) -> None:
-        await self.log(message, level="INFO", context=context)
-    
-    async def debug(self, message: str, context: Dict[str, Any] | None = None) -> None:
-        await self.log(message, level="DEBUG", context=context)
-        
-    async def warning(self, message: str, context: Dict[str, Any] | None = None) -> None:
-        await self.log(message, level="WARNING", context=context)
-        
-    async def error(self, message: str, context: Dict[str, Any] | None = None) -> None:
-        await self.log(message, level="ERROR", context=context)
+    def log(self, message: str, level: LogLevel, context: Dict[str, Any] | None = None) -> None:
+        if crawl_job := self.crawl_job_model():
+            crawl_job.log(message, level=level, context=context)
 
+    def info(self, message: str, context: Dict[str, Any] | None = None)     -> None: self.log(message, level=LogLevel.INFO, context=context)
+    def debug(self, message: str, context: Dict[str, Any] | None = None)    -> None: self.log(message, level=LogLevel.DEBUG, context=context)
+    def warning(self, message: str, context: Dict[str, Any] | None = None)  -> None: self.log(message, level=LogLevel.WARNING, context=context)
+    def error(self, message: str, context: Dict[str, Any] | None = None)    -> None: self.log(message, level=LogLevel.ERROR, context=context)
+    def critical(self, message: str, context: Dict[str, Any] | None = None) -> None: self.log(message, level=LogLevel.CRITICAL, context=context)
 
     @classmethod
-    async def create(cls, start_urls: List[str] = [], *, id: int | None = None, allowed_domains: List[str] = [], settings: dict[str, Any] | None = None) -> Self:
-        """Create a new job instance with the provided configuration.
-
-        If `id` is not provided, it will be set by creating a new record in the database.
-        If `allowed_domains` is not provided, it defaults to start_urls' domains.
-        """
-        
-
-        # Automatically extract allowed domains from start_urls if not provided
-        if not allowed_domains:
-            allowed_domains = [urlparse(url).netloc for url in start_urls]
-
-        # If id is None, it will be set by the database when saving
-        if id is None:
-            from pgmcp.models.crawl_job import CrawlJob            
-            job = CrawlJob(
-                start_urls=start_urls,
-                allowed_domains=allowed_domains,
-                settings=settings or {}
-            )
-            await job.save()
-            id = job.id
-            
-
+    def from_crawl_job(cls, id: int, start_urls: List[str] = [], allowed_domains: List[str] = [], settings: Dict[str, Any] | None = None) -> Self:
         return cls.model_validate({
+            "id": id,
             "start_urls": start_urls,
             "allowed_domains": allowed_domains,
-            "settings": settings,
-            "id": id
+            "settings": CustomSettings.model_validate(settings) if settings else None
         })
 
     def to_base_settings(self) -> BaseSettings:

@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from typing import Generator, Tuple
 
 import networkx as nx
@@ -10,22 +11,43 @@ from pgmcp.db import AgtypeRecord
 from pgmcp.environment import Environment, set_current_env
 from pgmcp.settings import get_settings
 
-
-settings = get_settings()
-dbs = settings.db.get_primary()
-
-
-set_current_env(Environment.TESTING)
+from .setup.database import setup_database
+from .setup.sqlalchemy import close_sqlalchemy_engine
 
 
+# ===========================================================================================
+# ENV AND SETTINGS
+# ===========================================================================================
 
+ENV = set_current_env(Environment.TESTING)
+SETTINGS = get_settings()
+
+
+# ===========================================================================================
+# HOOKS
+# ===========================================================================================
+setup_database()
+
+# # Session: Before
+# @pytest.fixture(scope="session", autouse=True)
+# def session_setup():
+#     global ONCE
+#     if ONCE is None:
+#         ONCE = True
+    
+# Function: Around: Async
 @pytest_asyncio.fixture(autouse=True, scope="function")
-async def close_sqlalchemy_engine():
-    """Fixture to ensure the SQLAlchemy engine is disposed after each test."""
-    yield
+async def around_function_async():
+    # nothing before
+    
+    yield # execution of the test function
 
-    await dbs.sqlalchemy_dispose_async_engine()
+    await close_sqlalchemy_engine()
 
+
+# ===========================================================================================
+# FIXTURES
+# ===========================================================================================
 
 @pytest.fixture(scope="function")
 def nx_graph() -> nx.MultiDiGraph:

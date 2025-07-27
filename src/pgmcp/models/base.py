@@ -2,18 +2,21 @@ from __future__ import annotations
 
 import datetime
 
-from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, List, Optional, Self, Type, Union
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, Generator, List, Optional, Self, Type, Union
 
 from blinker import Namespace
 from sqlalchemy import DateTime, and_, func, schema, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import DeclarativeBase, Mapped, declarative_base, mapped_column
+from sqlalchemy.orm import (DeclarativeBase, InstrumentedAttribute, Mapped, Session, declarative_base, mapped_column,
+                            sessionmaker)
 from sqlalchemy.sql.elements import NamedColumn
 from sqlalchemy.sql.selectable import Select
 from typing_extensions import Literal
 
 from pgmcp.database_connection_settings import DatabaseConnectionSettings
+from pgmcp.models.mixin import RailsQueryInterfaceMixin
 from pgmcp.settings import get_settings
 
 
@@ -21,11 +24,16 @@ if TYPE_CHECKING:
     from pgmcp.models.base_query_builder import QueryBuilder
 
 
-
-
-
-
 _settings = get_settings()
+
+
+# Sentinel ContextVar for session and ownership
+_async_session_ctx: ContextVar[AsyncSession | None] = ContextVar("_async_session_ctx", default=None)
+_async_session_owner_ctx: ContextVar[bool] = ContextVar("_async_session_owner_ctx", default=False)
+
+_session_ctx: ContextVar[Session | None] = ContextVar("_session_ctx", default=None)
+_session_owner_ctx: ContextVar[bool] = ContextVar("_session_owner_ctx", default=False)
+
 
 # ================================================================
 # Events / Signals
@@ -137,13 +145,25 @@ async def send_async_signal_pair(signal_name: str, sender: Base) -> AsyncGenerat
         yield
     finally:
         await signal_after.send_async(sender)
+        
+@contextmanager
+def send_signal_pair(signal_name: str, sender: Base) -> Generator[None, None, None]:
+    """Context manager that sends the signals by name before an after an operation via context manager."""
+    signal_before = model_signals.signal(f"before_{signal_name}")
+    signal_after = model_signals.signal(f"after_{signal_name}")
+
+    try:
+        signal_before.send(sender)
+        yield
+    finally:
+        signal_after.send(sender)
     
 # ================================================================
 # Base Model Class
 # ================================================================    
 
 
-class Base(DeclarativeBase):
+class Base(DeclarativeBase, RailsQueryInterfaceMixin):
     """Base class for all models in the application."""
     __abstract__ = True
 
@@ -193,7 +213,8 @@ class Base(DeclarativeBase):
     @property
     def is_existing(self) -> bool: return not self.is_new
 
-    # == Persistence Methods =========================================================
+
+    # == ASYNC Persistence Methods =========================================================
 
     async def save(self):
         """Active record dumb save method.
@@ -257,7 +278,57 @@ class Base(DeclarativeBase):
             async with send_async_signal_pair("flush", self):
                 await session.flush()
 
-    # == Session Management Methods =========================================================
+    # == ASYNC Session Management Methods =========================================================
+
+
+
+    @classmethod
+    @asynccontextmanager
+    async def async_context(cls) -> AsyncGenerator[AsyncSession, None]:
+        """Context manager that is the high level unit of operational work spanning multiple AR operations.
+        
+        This has an explicit close call that release the session back to the pool.
+        
+        
+        Model usage requires this to be performed at a high level within the application's request/response cycle.
+        
+        Usage:
+
+        ```python
+        async with Model.context() as models:
+            await CrawlItem.create(
+                url="https://example.com",
+                title="Example Crawl Item"
+            )
+            
+            # Perform other operations within the same session
+            # no matter how deep in the stack you are, as long
+            # as you used this, your models will work.
+            def request_handler():
+                # This can be any function that needs to use the models
+                model = await models.CrawlItem.find(1)
+
+            await models.CrawlItem.update_all({"title": "Updated Title"}, id=1)
+        ```
+        """
+        session = _async_session_ctx.get()
+        is_owner = False
+        if session is None:
+            async with cls.async_session() as session:
+                token = _async_session_ctx.set(session)
+                owner_token = _async_session_owner_ctx.set(True)
+                is_owner = True
+                try:
+                    yield session
+                finally:
+                    if is_owner:
+                        _async_session_ctx.reset(token)
+                        _async_session_owner_ctx.reset(owner_token)
+                # Close the session if we are the owner
+                await session.close()
+        else:
+            # Nesting within an existing session, just yield but dont close it
+            yield session
 
     @classmethod
     @asynccontextmanager
@@ -269,14 +340,14 @@ class Base(DeclarativeBase):
         session = await _settings.db.get_primary().sqlalchemy_async_session()
         yield session
 
-    @classmethod
-    async def get_async_session(cls) -> AsyncSession:
-        """Return an AsyncSession that can be used as a context manager."""
-        return await _settings.db.get_primary().sqlalchemy_async_session()
+    # @classmethod
+    # async def get_async_session(cls) -> AsyncSession:
+    #     """Return an AsyncSession that can be used as a context manager."""
+    #     return await _settings.db.get_primary().sqlalchemy_async_session()
     
     @classmethod
     @asynccontextmanager
-    async def transaction(cls) -> AsyncGenerator[AsyncSession, None]:
+    async def async_transaction(cls) -> AsyncGenerator[AsyncSession, None]:
         """
         Async context manager for a SQLAlchemy async transaction.
 
@@ -306,236 +377,85 @@ class Base(DeclarativeBase):
             result = await session.execute(select(cls).where(cls.id == id))
             return result.scalar_one_or_none()
 
-    # == Rails-style Query Interface ====================================================
-
-    @classmethod
-    def query(cls: type[Self]):
-        """Rails: Model.all - returns a QueryBuilder for method chaining"""
-        from pgmcp.models.base_query_builder import QueryBuilder
-        return QueryBuilder(cls)
-
-    @classmethod
-    def where(cls: type[Self], *args, **kwargs):
-        """Rails: Model.where(condition)"""
-        return cls.query().where(*args, **kwargs)
-
-    @classmethod
-    def order(cls: type[Self], *args):
-        """Rails: Model.order(:column)"""
-        return cls.query().order(*args)
-
-    @classmethod
-    def order_by(cls: type[Self], *args):
-        """Alias for order()"""
-        return cls.query().order_by(*args)
-
-    @classmethod
-    def limit(cls: type[Self], n: int):
-        """Rails: Model.limit(n)"""
-        return cls.query().limit(n)
-
-    @classmethod
-    def offset(cls: type[Self], n: int):
-        """Rails: Model.offset(n)"""
-        return cls.query().offset(n)
-
-    @classmethod
-    def distinct(cls: type[Self], *columns):
-        """Rails: Model.distinct"""
-        return cls.query().distinct(*columns)
-
-    @classmethod
-    def select_columns(cls: type[Self], *columns):
-        """Rails: Model.select(:column1, :column2)"""
-        return cls.query().select(*columns)
-
-    @classmethod
-    def group(cls: type[Self], *columns):
-        """Rails: Model.group(:column)"""
-        return cls.query().group(*columns)
-
-    @classmethod
-    def group_by(cls: type[Self], *columns):
-        """Alias for group()"""
-        return cls.query().group_by(*columns)
-
-    @classmethod
-    def having(cls: type[Self], *conditions):
-        """Rails: Model.having(condition)"""
-        return cls.query().having(*conditions)
-
-    @classmethod
-    def joins(cls: type[Self], *relationships):
-        """Rails: Model.joins(:association)"""
-        return cls.query().joins(*relationships)
-
-    @classmethod
-    def left_joins(cls: type[Self], *relationships):
-        """Rails: Model.left_joins(:association)"""
-        return cls.query().left_joins(*relationships)
-
-    @classmethod
-    def includes(cls: type[Self], *relationships):
-        """Rails: Model.includes(:association)"""
-        return cls.query().includes(*relationships)
-
-    @classmethod
-    def preload(cls: type[Self], *relationships):
-        """Rails: Model.preload(:association)"""
-        return cls.query().preload(*relationships)
-
-    @classmethod
-    def eager_load(cls: type[Self], *relationships):
-        """Rails: Model.eager_load(:association)"""
-        return cls.query().eager_load(*relationships)
-
-    @classmethod
-    def readonly(cls: type[Self]):
-        """Rails: Model.readonly"""
-        return cls.query().readonly()
-
-    @classmethod
-    def lock(cls: type[Self], mode: str = "UPDATE"):
-        """Rails: Model.lock"""
-        return cls.query().lock(mode)
-
-    @classmethod
-    def none(cls: type[Self]):
-        """Rails: Model.none"""
-        return cls.query().none()
-
-    @classmethod
-    async def find_by(cls: type[Self], **kwargs):
-        """Rails: Model.find_by(attribute: value)"""
-        return await cls.query().find_by(**kwargs)
-
-    @classmethod
-    async def find_by_or_raise(cls: type[Self], **kwargs):
-        """Rails: Model.find_by!(attribute: value)"""
-        return await cls.query().find_by_or_raise(**kwargs)
-
-    @classmethod
-    async def exists(cls: type[Self], **kwargs):
-        """Rails: Model.exists?(conditions)"""
-        return await cls.query().exists(**kwargs)
-
-    @classmethod
-    async def take(cls: type[Self], n: Optional[int] = None):
-        """Rails: Model.take or Model.take(n)"""
-        return await cls.query().take(n)
-
-    @classmethod
-    async def pluck(cls: type[Self], *columns):
-        """Rails: Model.pluck(:column1, :column2)"""
-        return await cls.query().pluck(*columns)
-
-    @classmethod
-    async def ids(cls: type[Self]):
-        """Rails: Model.ids"""
-        return await cls.query().ids()
-
-    # Override existing methods to use QueryBuilder
-    @classmethod
-    async def all(cls: type[Self]):
-        """Rails: Model.all - fetch all records"""
-        return await cls.query().all()
-
-    @classmethod
-    async def first(cls: type[Self], n: Optional[int] = None) -> Union[Optional[Self], List[Self]]:
-        """Rails: Model.first or Model.first(n)"""
-        return await cls.query().first(n)
-
-    @classmethod
-    async def last(cls: type[Self], n: Optional[int] = None) -> Union[Optional[Self], List[Self]]:
-        """Rails: Model.last or Model.last(n)"""
-        return await cls.query().last(n)
-
-    @classmethod
-    async def count(cls: type[Self]):
-        """Rails: Model.count - count all records"""
-        return await cls.query().count()
-
-    # == Rails-style Creation and Destruction Methods =======================================
-
-    @classmethod
-    async def create(cls: type[Self], **attributes):
-        """Rails: Model.create(attributes)"""
-        instance = cls(**attributes)
-        await instance.save()
-        return instance
-
-    @classmethod
-    async def create_or_raise(cls: type[Self], **attributes):
-        """Rails: Model.create!(attributes) - raises on validation error"""
-        # For now, same as create - would need validation framework
-        return await cls.create(**attributes)
-
-    @classmethod
-    async def find_or_create_by(cls: type[Self], **attributes):
-        """Rails: Model.find_or_create_by(attributes)"""
-        instance = await cls.find_by(**attributes)
-        if instance is None:
-            instance = await cls.create(**attributes)
-        return instance
-
-    @classmethod
-    async def find_or_initialize_by(cls: type[Self], **attributes):
-        """Rails: Model.find_or_initialize_by(attributes)"""
-        instance = await cls.find_by(**attributes)
-        if instance is None:
-            instance = cls(**attributes)
-        return instance
-
-    @classmethod
-    async def update_all(cls: type[Self], values: Dict[str, Any], **conditions):
-        """Rails: Model.update_all(values, conditions)"""
-        from sqlalchemy import update
-        
-        stmt = update(cls).values(**values)
-        if conditions:
-            where_conditions = []
-            for key, value in conditions.items():
-                attr = getattr(cls, key)
-                where_conditions.append(attr == value)
-            stmt = stmt.where(and_(*where_conditions))
-            
-        async with cls.async_session() as session:
-            result = await session.execute(stmt)
-            await session.commit()
-            return result.rowcount
-
-    @classmethod
-    async def delete_all(cls: type[Self], **conditions):
-        """Rails: Model.delete_all(conditions)"""
-        from sqlalchemy import delete
-        
-        stmt = delete(cls)
-        if conditions:
-            where_conditions = []
-            for key, value in conditions.items():
-                attr = getattr(cls, key)
-                where_conditions.append(attr == value)
-            stmt = stmt.where(and_(*where_conditions))
-            
-        async with cls.async_session() as session:
-            result = await session.execute(stmt)
-            await session.commit()
-            return result.rowcount
-
-    @classmethod
-    async def destroy_all(cls: type[Self], **conditions):
-        """Rails: Model.destroy_all(conditions) - runs callbacks"""
-        # Find all matching records first to run callbacks
-        if conditions:
-            records = await cls.where(**conditions).all()
-        else:
-            records = await cls.all()
-            
-        count = 0
-        for record in records:
-            await record.destroy()
-            count += 1
-            
-        return count
-
+    
+    
     # =======================================================================================
+    # AFD: Additional Field Data
+    # - When additional fields are added to select(...) SQLAlchemy by default will prevent
+    #   the model instance from being returned via scalar_* methods -- instead returning a row.
+    # - This approach allows us to handle cases where this happens by stashing the additional fields
+    #   in an `additional_fields` attribute within the model instance.
+    #
+    # Use this to gain access to the additional fields you might have added to aggregate some other
+    # information or data from a join.
+    #
+    # =======================================================================================
+
+    @classmethod
+    async def hydrate(cls: type[Self], **kwargs: Any) -> Self:
+        """Hydrate a model instance with additional fields."""
+        instance = cls(**kwargs)
+        instance.additional_fields = {k: v for k, v in kwargs.items() if k not in instance.__table__.columns}
+        return instance
+
+    # == AFD Property Implementation =========================================================
+
+    @property
+    def additional_fields(self) -> Dict[str, Any]:
+        """Return additional field data stored in the model instance."""
+        if not hasattr(self, '_additional_fields'):
+            setattr(self, '_additional_fields', {})
+        return getattr(self, '_additional_fields')
+    
+    @additional_fields.setter
+    def additional_fields(self, value: Dict[str, Any]):
+        """Set additional field data in the model instance."""
+        if not hasattr(self, '_additional_fields'):
+            setattr(self, '_additional_fields', {})
+        self.additional_fields.update(value)
+        
+    @additional_fields.deleter
+    def additional_fields(self):
+        """Delete additional field data from the model instance."""
+        if hasattr(self, '_additional_fields'):
+            delattr(self, '_additional_fields') 
+    
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializer that can and should be overridden to return a dictionary representation of the model instance."""
+        model_fields = {col.name: getattr(self, col.name) for col in self.__table__.columns}
+        model_fields.update(self.additional_fields)
+        return model_fields
+
+
+    def get_instrumented_attributes(self) -> Dict[str, InstrumentedAttribute]:
+        """Return a dictionary of instrumented attributes for the model."""
+        return {attr: getattr(self.__class__, attr) for attr in dir(self.__class__) if isinstance(getattr(self.__class__, attr), InstrumentedAttribute)}
+    
+    def get_instrumented_attribute_values(self) -> Dict[str, Any]:
+        """Return a dictionary of instrumented attribute values for the model."""
+        return {attr: getattr(self, attr) for attr in self.get_instrumented_attributes()}
+
+    def model_dump(self, 
+        filter: Callable[[str, Any], bool] | None = None,
+        exclude: set[str] | None = None,
+        exclude_none: bool = True,
+    ) -> Dict[str, Any]:
+        """Serialize the model to a dict, optionally filtering fields and excluding None values.
+        
+        This explicitly handles the additional fields and allows for custom filtering to manage the final form.
+        """
+
+        all_data = self.get_instrumented_attribute_values()
+        all_data.update(self.additional_fields)
+        data = {}
+        for key, value in all_data.items():
+            if exclude and key in exclude:
+                continue
+            if filter and not filter(key, value):
+                continue
+            if exclude_none and value is None:
+                continue
+            data[key] = value
+        
+        return data

@@ -1,3 +1,5 @@
+from asyncio.tasks import create_task
+from textwrap import dedent
 from typing import Annotated, Any, Dict, List, Literal, Tuple
 
 from fastmcp import Context, FastMCP
@@ -8,6 +10,7 @@ from pgmcp.models.crawl_item import CrawlItem  # Import to ensure SQLAlchemy reg
 from pgmcp.models.crawl_job import CrawlJob
 from pgmcp.models.crawl_log import CrawlLog  # Import to ensure SQLAlchemy registration
 from pgmcp.payload import Payload
+from pgmcp.scrapy.job import Job
 from pgmcp.settings import get_settings
 
 
@@ -56,87 +59,40 @@ mcp = FastMCP(name="crawl", instructions=OVERVIEW)
 # =====================================================
 settings = get_settings()
 
-    
+# =====================================================
+# DB Decorators
+# =====================================================
+
 @mcp.tool(tags={"scrapy", "spider", "crawler", "job", "define", "create"})
 async def create_job(ctx: Context, 
     start_urls: Annotated[List[str], Field(description="List of URLs to start crawling from")],
     depth: Annotated[int, Field(description="Maximum depth to crawl")] = 3,
 ) -> Dict[str, Any]:
     """Define a new Scrapy job that will not run until explicitly started using `start_job` tool."""
+    async with CrawlJob.async_context() as async_session:
+        job = CrawlJob(
+            start_urls=start_urls,
+            settings={"DEPTH_LIMIT": depth},
+            allowed_domains=[url.split("//")[-1].split("/")[0] for url in start_urls],
+        )
     
-    job = CrawlJob(
-        start_urls=start_urls,
-        settings={"DEPTH_LIMIT": depth},
-        allowed_domains=[url.split("//")[-1].split("/")[0] for url in start_urls],
-    )
-    
-    await job.save()
-    
-    return Payload.create(
-        job.model_dump(), message="Job defined successfully"
-    ).model_dump()
-
-
-@mcp.tool(tags={"scrapy", "spider", "crawler", "job", "control"})
-async def control_job(ctx: Context, 
-    job_ids : Annotated[List[int], Field(description="List of job IDs to control")],
-    action  : Annotated[Literal["enqueue", "pause", "resume", "cancel", "retry"], Field(
-        description="Attempt to perform one of the following actions: enqueue, pause, resume, cancel, or retry",
-        pattern= r"^(enqueue|pause|resume|cancel|retry)$"
-    )]
-) -> Dict[str, Any]:
-    """Control a set of Scrapy jobs by specifying their IDs and the action to perform on them.
-    
-    Allowed Transitions by Action:
-    - `enqueue`: [([IDLE], [READY])]
-    - `pause`: [([RUNNING], [PAUSED])]
-    - `resume`: [([PAUSED], [RUNNING])]
-    - `cancel`: [([IDLE, READY, RUNNING, PAUSED], [CANCELLED])]
-    - `retry`: [([FAILED], [READY])]    
+        await job.save()
         
-    """
-    crawl_jobs = await CrawlJob.query().where(id=job_ids).all()
-    if not crawl_jobs:
-        raise ValueError(f"CrawlJobs with IDs {job_ids} do not exist.")
-    
-    errors: List[Tuple[CrawlJob, str]] = []
-    
-    for crawl_job in crawl_jobs:
-        try:
-            if action == "enqueue":
-                await crawl_job.enqueue()
-            elif action == "pause":
-                await crawl_job.pause()
-            elif action == "resume":
-                await crawl_job.resume()
-            elif action == "cancel":
-                await crawl_job.cancel()
-            elif action == "retry":
-                await crawl_job.retry()
-        except ValueError as e:
-            errors.append((crawl_job, f"Transition Error: {e!r}"))
+        return Payload.create(
+            job.model_dump(), message="Job defined successfully"
+        ).model_dump()
 
-    # Prep Response
-    current_crawl_jobs = await CrawlJob.query().where(id=job_ids).all()
-    payload_collection = [job.model_dump() for job in current_crawl_jobs]
-
-    if errors:
-        error_messages = "\n".join([f"CrawlJob({job.id}) encountered an error while trying to {action} it: {error}" for job, error in errors])
-        error_messages += "\n\nOther CrawlJobs not mentioned were successfully processed."
-
-        return Payload.create(payload_collection, error=error_messages).model_dump()
-
-    return Payload.create(payload_collection, message=f"Job {action}d successfully").model_dump()
     
     
 @mcp.tool(tags={"scrapy", "spider", "crawler", "job", "get"})
 async def get_job(ctx: Context, job_id: int) -> Dict:
     """Get extra information about a specific Scrapy job by its ID."""
-    crawl_job = await CrawlJob.find(job_id)
-    if not crawl_job:
-        raise ValueError(f"CrawlJob with ID {job_id} does not exist.")
-    
-    return Payload.create(crawl_job, message="Job retrieved successfully").model_dump()
+    async with CrawlJob.async_context() as async_session:
+        crawl_job = await CrawlJob.find(job_id)
+        if not crawl_job:
+            raise ValueError(f"CrawlJob with ID {job_id} does not exist.")
+
+        return Payload.create(crawl_job, message="Job retrieved successfully").model_dump()
 
 
 
@@ -150,7 +106,7 @@ async def list_jobs(
     order    : Annotated[str, Field(description="Sort order: asc or desc", pattern=r"^(asc|desc)$")] = "desc"
 ) -> Dict[str, Any]:
     """List all Scrapy jobs."""
-    async with CrawlJob.transaction() as async_session:
+    async with CrawlJob.async_context() as async_session:
         payload = Payload()
         
         # Build base query
@@ -176,7 +132,7 @@ async def list_jobs(
         qb = qb.limit(per_page).offset(offset)
 
         # Count total records
-        payload.metadata.count = await CrawlJob.count()
+        payload.metadata.count = await CrawlJob.query().count()
         payload.metadata.page = page
         payload.metadata.per_page = per_page
         
@@ -185,24 +141,71 @@ async def list_jobs(
         
         for model in models:
             # model_dump now automatically includes aggregate fields from _row_data
-            model_data = model.model_dump(exclude_none=True)
+            model_data = model.model_dump()
             payload.collection.append(model_data)
 
         return payload.model_dump()
 
-
-@mcp.tool(tags={"scrapy", "spider", "crawler", "job", "enqueue"})
+@mcp.tool(tags={"scrapy", "spider", "crawler", "job", "start"})
 async def start_job(ctx: Context, crawl_job_id: int) -> Dict[str, Any]:
     """Enqueue a Scrapy job by its ID to be run by the Scrapy engine asap."""
-    crawl_job = await CrawlJob.find(crawl_job_id)
-    if not crawl_job:
-        raise ValueError(f"CrawlJob with ID {crawl_job_id} does not exist.")
+    async with CrawlJob.async_context() as async_session:
+        crawl_job = await CrawlJob.find(crawl_job_id)
+        if not crawl_job:
+            raise ValueError(f"CrawlJob with ID {crawl_job_id} does not exist.")
 
-    await crawl_job.enqueue()
-    
-    return Payload.create(crawl_job, message="Job enqueued successfully").model_dump()
+        # Ensure job is in READY state before running it.
+        await crawl_job.enqueue()
+        
+        # Get the job
+        job = crawl_job.to_scrapy_job()
+            
+        # Start the job in the background while polling for updates
+        await job.run(background=True)
+        
+        # At this point the job is done.
+        await crawl_job.refresh() # make sure we have the latest state
 
-# @mcp.tool
-# async def job_pause(ctx: Context, job_id: str) -> str:
-#     """Pause a Scrapy job by its ID."""
-#     return f"Job {job_id} paused"
+        instructions = dedent(f"""
+        # AI Instructions
+        
+        - **Result:** 
+            - The job with **ID:{crawl_job_id}** has been started and is running in the background.
+        - **Next Steps:** 
+            - You can monitor the job's progress and status using the `get_job` tool with the job ID:{crawl_job_id}.
+            - Use `get_job` at least three times to get a sense of how fast the job is running and provide the user with an analysis of the job's progress.
+        """)
+
+        return Payload.create(crawl_job, message=instructions).model_dump()
+
+@mcp.tool(tags={"scrapy", "spider", "crawler", "job", "logs"})
+async def get_job_logs(
+    ctx: Context,
+    crawl_job_id: int, 
+    per_page: Annotated[int, Field(description="Number of logs to retrieve", ge=1, le=100)] = 25,
+    page: Annotated[int, Field(description="Page number to retrieve", ge=1)] = 1
+) -> Dict[str, Any]:
+    """Get detailed logs for a specific Scrapy job by its ID."""
+    async with CrawlJob.async_context() as async_session:
+        crawl_job = await CrawlJob.find(crawl_job_id)
+        
+        if not crawl_job:
+            raise ValueError(f"CrawlJob with ID {crawl_job_id} does not exist.")
+        
+        # Build the query
+        qb = CrawlLog.query().where(crawl_job_id=crawl_job_id).order("id", "asc")
+
+        # Apply pagination
+        offset = (page - 1) * per_page
+        qb = qb.limit(per_page).offset(offset)
+
+        # Get results
+        logs = await qb.all()
+
+        return Payload.create(
+            list(logs), 
+            count=await CrawlLog.query().where(crawl_job_id=crawl_job_id).count(),
+            page=page,
+            per_page=per_page,
+        ).model_dump()
+

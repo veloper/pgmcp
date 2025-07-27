@@ -23,7 +23,9 @@ class Settings(BaseModel):
     FTP_PASSIVE_MODE               : bool           = Field(default=True,                                      description="Use passive mode for FTP transfers.")
     FTP_PASSWORD                   : str            = Field(default="guest",                                   description="FTP password if not set in Request meta.")
     FTP_USER                       : str            = Field(default="anonymous",                               description="FTP username if not set in Request meta.")
-    ITEM_PIPELINES                 : Dict[str, int] = Field(default_factory=dict,                              description="Item pipelines and their orders.")
+    ITEM_PIPELINES                 : Dict[str, int] = Field(default_factory=lambda: {
+        "pgmcp.scrapy.pipeline.Pipeline": 100,
+    }, description="Item pipelines and their orders.")
     ITEM_PIPELINES_BASE            : Dict[str, int] = Field(default_factory=dict,                              description="Base item pipelines enabled by default in Scrapy.")
     JOBDIR                         : str | None     = Field(default=None,                                      description="Directory for storing crawl state for pausing/resuming.")
 
@@ -103,7 +105,7 @@ class Settings(BaseModel):
     }, description="Base download handlers enabled by default in Scrapy.")
     DUPEFILTER_DEBUG               : bool           = Field(default=False,        description="Log all duplicate requests.")
     
-    EXTENSIONS                     : Dict[str, int | None] = Field(default_factory=dict, description="Enabled extensions and their priorities.")
+    EXTENSIONS                     : Dict[str, int | None] = Field(default_factory=lambda: {}, description="Enabled extensions and their priorities.")
     EXTENSIONS_BASE                : Dict[str, int | None] = Field(default_factory=lambda: {
         "scrapy.extensions.corestats.CoreStats"     : 0,
         "scrapy.extensions.telnet.TelnetConsole"    : 0,
@@ -203,10 +205,6 @@ class Settings(BaseModel):
     CLOSESPIDER_ITEMCOUNT          : int = Field(default=0, description="Close spider after this many items.")
     CLOSESPIDER_PAGECOUNT          : int = Field(default=0, description="Close spider after this many pages.")
     CLOSESPIDER_ERRORCOUNT         : int = Field(default=0, description="Close spider after this many errors.")
-    
-    # Request fingerprinting
-    REQUEST_FINGERPRINTER_CLASS          : str = Field(default="scrapy.utils.request.RequestFingerprinter", description="Request fingerprinter class.")
-    REQUEST_FINGERPRINTER_IMPLEMENTATION : str = Field(default="2.7", description="Request fingerprinter implementation version.")
     
     # Autothrottle extension
     AUTOTHROTTLE_ENABLED           : bool  = Field(default=False, description="Enable AutoThrottle extension.")
@@ -336,7 +334,7 @@ class Settings(BaseModel):
         "twisted.internet.error.ConnectionLost",
         "twisted.internet.error.TCPTimedOutError",
         "twisted.web.client.ResponseFailed",
-        "IOError",
+        "builtins.IOError",
     ], description="Exception types that trigger retries.")
     
     # Warning settings
@@ -423,35 +421,23 @@ class Settings(BaseModel):
 class CustomSettings(Settings):
     """My custom scraper settings class that extends ScrapySettings with custom defaults."""
 
-    HTTPCACHE_ENABLED              : bool = Field(default=True)
-    CONCURRENT_REQUESTS            : int  = Field(default=12)
-    CONCURRENT_REQUESTS_PER_DOMAIN : int  = Field(default=3)
-    RANDOMIZE_DOWNLOAD_DELAY       : bool = Field(default=True)
-    ROBOTSTXT_OBEY                 : bool = Field(default=False)
+    HTTPCACHE_ENABLED              : bool  = Field(default=True)
+    HTTPCACHE_DIR                  : str   = Field(default='/tmp/scrapy/httpcache')
+    CONCURRENT_REQUESTS            : int   = Field(default=12)
+    CONCURRENT_REQUESTS_PER_DOMAIN : int   = Field(default=3)
+    RANDOMIZE_DOWNLOAD_DELAY       : bool  = Field(default=True)
+    DOWNLOAD_DELAY                 : float = Field(default=0.25, description="Be respectful with delays")
+    ROBOTSTXT_OBEY                 : bool  = Field(default=False)
+    USER_AGENT                     : str   = Field(default='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36')
+    LOG_LEVEL                      : str   = Field(default='INFO')
+    DEPTH_LIMIT                    : int   = Field(default=3, description="Limit the depth of the crawl")
 
-    DOWNLOADER_MIDDLEWARES : Dict[str, int | None] = Field(default_factory=lambda: {
-        'scrapy.downloadermiddlewares.useragent.UserAgentMiddleware': None,
-        'scrapy.downloadermiddlewares.retry.RetryMiddleware': None,
-        'scrapy_fake_useragent.middleware.RandomUserAgentMiddleware': 400,
-        'scrapy_fake_useragent.middleware.RetryUserAgentMiddleware': 401,
+    EXTENSIONS : Dict[str, int | None] = Field(default_factory=lambda: {
+        'pgmcp.scrapy.job_state_ext.JobStateExt': 400,
+        'pgmcp.scrapy.job_periodic_status_ext.JobPeriodicStatusExt': 500,
     })
 
-    FAKEUSERAGENT_PROVIDERS: List[str] = Field(default_factory=lambda: [
-        'scrapy_fake_useragent.providers.FakeUserAgentProvider',    # this is the first provider we'll try
-        'scrapy_fake_useragent.providers.FakerProvider',            # if FakeUserAgentProvider fails, we'll use faker to generate a user-agent string for us
-        'scrapy_fake_useragent.providers.FixedUserAgentProvider',   # fall back to USER_AGENT value
-    ])
-
-    USER_AGENT: str = Field(default='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36')
-
-    SPIDER_MIDDLEWARES : Dict[str, int] = Field(default_factory=lambda: {
-        'scrapy_magicfields.MagicFieldsMiddleware': 100,
+    ITEM_PIPELINES : Dict[str, int] = Field(default_factory=lambda: {
+        'pgmcp.scrapy.pipeline.Pipeline': 300
     })
 
-    MAGIC_FIELDS: Dict[str, str] = Field(default_factory=lambda: {
-        'job_id'           : "$jobid",
-        'response_url'     : "$response:url",
-        'response_status'  : "$response:status",
-        'response_headers' : "$response:headers",
-        'timestamp'        : "$unixtime"
-    })

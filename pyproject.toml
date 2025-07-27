@@ -56,11 +56,11 @@ dependencies = [
     "trafilatura>=2.0.0",
     "unstructured[md]>=0.18.5",
     "scrapy-fake-useragent>=1.4.4",
-    "scrapy-magicfields>=1.1.0",
+    "psycopg2>=2.9.10",
 ]
 
 [project.scripts]
-pgmcp = "pgmcp:main"
+pgmcp = "pgmcp:cli.main"
 
 [tool.pytest.ini_options]
 describe_prefixes = ["describe_"]

@@ -5,6 +5,8 @@ from sqlalchemy.orm import InstrumentedAttribute, joinedload, selectinload, subq
 from sqlalchemy.sql.expression import TextClause
 from sqlalchemy.sql.selectable import Select
 
+from pgmcp.models.base import Base
+
 
 if TYPE_CHECKING:
     from pgmcp.mixin.RailsQueryInterfaceMixin import RailsQueryInterfaceMixin
@@ -420,6 +422,15 @@ class QueryBuilder(Generic[T]):
             else:
                 options.append(selectinload(rel))
         self._stmt = self._stmt.options(*options)
+        return self
+
+    def eager_load_chain(self, *relationship_instances) -> "QueryBuilder[T]":
+        """Rails: Model.subqueryload(:association) - subquery loading"""
+        relationships = list(relationship_instances)
+        loader = subqueryload(relationships.pop(0))
+        for rel in relationships:
+            loader = loader.subqueryload(rel)
+        self._stmt = self._stmt.options(loader)
         return self
 
     def eager_load(self, *relationships) -> "QueryBuilder[T]":

@@ -13,9 +13,11 @@ from sqlalchemy.orm import (DeclarativeBase, InstrumentedAttribute, Mapped, Sess
                             sessionmaker)
 from sqlalchemy.sql.elements import NamedColumn
 from sqlalchemy.sql.selectable import Select
+from sqlalchemy_declarative_extensions import Function, declarative_database
 from typing_extensions import Literal
 
 from pgmcp.database_connection_settings import DatabaseConnectionSettings
+from pgmcp.models.base_functions import functions
 from pgmcp.models.mixin import RailsQueryInterfaceMixin
 from pgmcp.settings import get_settings
 
@@ -159,10 +161,16 @@ def send_signal_pair(signal_name: str, sender: Base) -> Generator[None, None, No
         signal_after.send(sender)
     
 # ================================================================
+# Functions
+# ================================================================
+
+
+
+# ================================================================
 # Base Model Class
 # ================================================================    
 
-
+@declarative_database
 class Base(DeclarativeBase, RailsQueryInterfaceMixin):
     """Base class for all models in the application."""
     __abstract__ = True
@@ -173,6 +181,10 @@ class Base(DeclarativeBase, RailsQueryInterfaceMixin):
     created_at: Mapped[datetime.datetime] = mapped_column( DateTime(timezone=True), nullable=False, server_default=func.now() )
     updated_at: Mapped[datetime.datetime] = mapped_column( DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now() )
     
+    # == Functions ===================================================================
+    
+    functions = functions
+   
     # == Hooks ========================================================================
     
     async def _before_save(self): pass

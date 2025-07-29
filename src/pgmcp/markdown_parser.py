@@ -149,7 +149,8 @@ class MarkdownParser:
                 # Create the main item text
                 main_text = " ".join(item_content) if item_content else ""
                 if main_text:
-                    items.append(md.MdListingItem(text=main_text))
+                    # items.append(md.MdListingItem(text=main_text))
+                    items.append(md.MdParagraph(text=main_text, sentences=self._split_sentences(main_text)))
                 
                 # Add any nested list items
                 items.extend(nested_items)

@@ -1,13 +1,8 @@
 from typing import TYPE_CHECKING, Self, Type
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Integer, String, and_
+from sqlalchemy import TEXT, Integer, String, and_
 from sqlalchemy.orm import Mapped, declared_attr, mapped_column, relationship
-
-
-if TYPE_CHECKING:
-    from pgmcp.models.listing_item import ListingItem
-    from pgmcp.models.section import SectionItem
 
 
 class IsEmbeddableMixin:
@@ -26,34 +21,14 @@ class IsEmbeddableMixin:
 
 class IsContentableMixin:
     """
-    Mixin for models that have_one Content association through a `contentable_type` and `contentable_id` field.
-    
-    This provides the fields needed for the Content model's generic_relationship.
-    Access the content via the Content model's 'contentable' relationship rather than through this mixin.
-    """
-    @declared_attr
-    def contentable_id(cls) -> Mapped[int | None]:
-        return mapped_column(Integer, nullable=True)
-    
-    @declared_attr
-    def contentable_type(cls) -> Mapped[str]:
-        return mapped_column(String, nullable=False)
+    Mixin for models that have "content" as a field that is of type text and is central to their representation.
 
-
-class IsSectionableMixin:
+    This mixin adds a `content` field to the model, which is typically used to store text data.
     """
-    Mixin for models that have_one SectionItem association through a `sectionable_type` and `sectionable_id` field.
-    
-    This provides the fields needed for relationships. Consider adding explicit relationships 
-    in individual models if needed.
-    """
-    @declared_attr
-    def sectionable_id(cls) -> Mapped[int | None]:
-        return mapped_column(Integer, nullable=True)
     
     @declared_attr
-    def sectionable_type(cls) -> Mapped[str]:
-        return mapped_column(String, nullable=False)
+    def content(cls):
+        return mapped_column(TEXT, nullable=True)
 
 
 class IsListableMixin:
@@ -63,14 +38,24 @@ class IsListableMixin:
     This provides the fields needed for relationships. Consider adding explicit relationships 
     in individual models if needed.
     """
-    @declared_attr
-    def listable_id(cls) -> Mapped[int | None]:
-        return mapped_column(Integer, nullable=True)
     
     @declared_attr
-    def listable_type(cls) -> Mapped[str]:
-        return mapped_column(String, nullable=False)
+    def listing_item(cls):
+        from sqlalchemy import and_
+        from sqlalchemy.orm import foreign
 
+        from pgmcp.models.listing_item import ListingItem
+        return relationship(
+            "ListingItem",
+            primaryjoin=lambda: and_(
+                foreign(ListingItem.listable_id) == getattr(cls, "id"),
+                ListingItem.listable_type == cls.__name__
+            ),
+            uselist=False,
+            cascade="all, delete-orphan",
+            overlaps="listing_item"
+        )
+    
 
 class RailsQueryInterfaceMixin:
     """

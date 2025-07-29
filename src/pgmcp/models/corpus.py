@@ -5,9 +5,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from pgmcp import utils
 from pgmcp.models.base import Base
-from pgmcp.models.section import Section
 
 
 if TYPE_CHECKING:

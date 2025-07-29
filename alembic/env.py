@@ -56,8 +56,14 @@ EXTENSION_TABLES = {
     'us_lex', 'us_gaz', 'us_rules', 'part_config', 'part_config_sub'
 }
 
+EXTENSION_FUNCTIONS = {
+    'get_env', 'pg_settings_reflect_env', 'get_embedding', 'add_numbers'
+}
+
 def should_include_object(object, name, type_, reflected, compare_to):
     if type_ == "table" and name in EXTENSION_TABLES:
+        return False
+    if type_ == "function" and name in EXTENSION_FUNCTIONS:
         return False
     return True
 

@@ -11,7 +11,6 @@ MdElementTypes = Union[
     "MdTableRow",
     "MdTable",
     "MdCodeBlock",
-    "MdListingItem",
     "MdListing",
     "MdSentence",
     "MdParagraph",
@@ -96,12 +95,10 @@ class MdCodeBlock(MdElement):
     delimiter : str = Field(..., description="The delimiter used for the code block")
     language_id: str | None = Field(..., description="The programming language of the code block")
 
-class MdListingItem(MdElement):
-    """Represents an item in a markdown list."""
 
 class MdListing(MdElement):
     """Represents a list in a markdown document."""
-    listing_items: List[Union[MdListingItem, MdListing]] = Field(default_factory=list, description="List of items in the list, can be ListingItem or nested Listing")
+    listing_items: List[Union[MdParagraph, Self, MdTable, MdCodeBlock, MdSection]] = Field(default_factory=list, description="List of items in the list, can be ListingItem or nested Listing")
     ordered: bool = Field(default=False, description="True if the list is ordered, False if unordered")
 
 class MdSentence(MdElement):
@@ -119,8 +116,6 @@ class MdSection(MdElement):
     level: int = Field(..., description="The heading level of the section (e.g., 1 for H1, 2 for H2)")
     title: str = Field(..., description="The title of the section")
     section_items: List[Union[MdParagraph, MdListing, MdTable, MdCodeBlock, Self]] = Field(default_factory=list, description="List of items in the section, including nested subsections")
-
-
 
 class MdDocument(MdElement):
     """Represents a markdown document as a nested tree structure."""

@@ -11,22 +11,21 @@ from pgmcp.models.mixin import IsContentableMixin, IsEmbeddableMixin
 
 
 if TYPE_CHECKING:
-    from pgmcp.models.content import Content
     from pgmcp.models.question import Question
 
-class Answer(IsEmbeddableMixin, Base):
+class Answer(IsEmbeddableMixin, IsContentableMixin, Base):
     """Represents an answer, derived from a piece of content, that serves as a response to a specific question."""
     # == Model Metadata =======================================================
     __tablename__ = "answers"
     
-    # == Columns ============================================================== 
-    content_id: Mapped[int] = mapped_column(ForeignKey("contents.id"), nullable=False)
+    # == Columns ==============================================================
     question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), nullable=False)
     
     text: Mapped[str] = mapped_column(nullable=False)
     
     # == Relationships ========================================================
     question: Mapped[Question] = relationship("Question", back_populates="answers")
-    content: Mapped[Content] = relationship("Content")
     
     # == Methods ==============================================================
+
+

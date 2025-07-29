@@ -8,22 +8,12 @@ from .base import Base
 from .library import Library
 from .corpus import Corpus
 from .document import Document
-from .section import Section
-from .section_item import SectionItem
 from .answer import Answer
-from .code_block import CodeBlock
-from .content import Content
 from .crawl_item import CrawlItem
 from .crawl_job import CrawlJob
 from .crawl_log import CrawlLog
-from .listing import Listing
-from .listing_item import ListingItem
-from .paragraph import Paragraph
 from .question import Question
-from .sentence import Sentence
-from .table import Table
-from .table_row import TableRow
-from .table_row_cell import TableRowCell
+from .element import Element
 # isort: on
 
 # Alias the context manager from Base for convenience
@@ -39,21 +29,14 @@ __all__ = [
     "Library",
     "Corpus",
     "Document",
-    "Section",
-    "SectionItem",
     "Answer",
-    "CodeBlock",
-    "Content",
     "CrawlItem",
     "CrawlJob",
     "CrawlLog",
-    "Listing",
-    "ListingItem",
-    "Paragraph",
     "Question",
-    "Sentence",
-    "Table",
-    "TableRow",
-    "TableRowCell",
+    "Element",
     "context"
 ]
+
+
+

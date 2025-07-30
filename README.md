@@ -109,10 +109,20 @@ These tools provide a unified interface for AI Agents to manage, curate, and ing
     ```bash
     uv run pgmcp run --port 8000 --transport streamable-http
     ```
+   You should see something like this:
+
+    ```
+    [07/30/25 14:32:54] INFO     Starting MCP server 'pgmcp' with transport 'streamable-http' on http://0.0.0.0:8000/mcp/
+    INFO:     Started server process [13951]
+    INFO:     Waiting for application startup.
+    INFO:     Application startup complete.
+    INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+    ```
+
 
 ## Client Setup
 
-### VSCODE
+### VSCode
 1. Open Command Palette (Cmd+Shift+P or Ctrl+Shift+P).
 2. Select `MCP: Add Server...`
 3. Choose "HTTP" option.

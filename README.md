@@ -13,7 +13,7 @@ This is the main FastMCP server acting as the main server for all of the sub-ser
 Each of the sub-servers henceforth fit under the umbrella of supporting `pgkeen` Postgresql -- leveraging its extensive collection of install extensions.
 
 
-> [!INFO]  
+> [!NOTE]  
 > In the future these sub-servers may be spun off into their own FastMCP server projects.
 
 ### Apache AGE Server (`server_age.py`)
@@ -55,7 +55,7 @@ Scrapy's configuration is flexible and eventually exposable. Sensible defaults f
 
 This server provides a set of tools for low-level PostgreSQL administration, including executing SQL queries, managing extensions, and handling functions. It is designed to be used by AI Agents for advanced database management tasks.
 
-> [!INFO] 
+> [!NOTE] 
 > Basic enforcement of SQL query safety is provided, but it is recommended to use these tools with caution, especially in production environments.
 
 

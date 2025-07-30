@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 
+import networkx as nx
 import psycopg2
 
 from pgmcp.settings import DatabaseConnectionSettings
@@ -269,6 +270,53 @@ class DbOps:
             stmt = f"ALTER TABLE {full_table} {alteration}"
             cur.execute(stmt)
 
+
+    def get_delete_order(self, schema: str = 'public') -> List[str]:
+        """
+        Returns a list of table names in the correct order for deletion,
+        so that child tables are deleted before parent tables (to avoid FK violations).
+        Builds the dependency graph using both table and column names for accuracy.
+        """
+        with self.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    tc.table_name AS child_table,
+                    kcu.column_name AS child_column,
+                    ccu.table_name AS parent_table,
+                    ccu.column_name AS parent_column
+                FROM
+                    information_schema.table_constraints AS tc
+                    JOIN information_schema.key_column_usage AS kcu
+                      ON tc.constraint_name = kcu.constraint_name
+                      AND tc.table_schema = kcu.table_schema
+                    JOIN information_schema.constraint_column_usage AS ccu
+                      ON ccu.constraint_name = tc.constraint_name
+                      AND ccu.table_schema = tc.table_schema
+                WHERE
+                    tc.constraint_type = 'FOREIGN KEY'
+                    AND tc.table_schema = %s
+            """, (schema,))
+            edges = cur.fetchall()
+
+        G = nx.DiGraph()
+        # Use (table, column) tuples for nodes
+        for table in self.table_names:
+            G.add_node((table, None))  # Add table as node (column=None for table-level ops)
+
+        for child_table, child_column, parent_table, parent_column in edges:
+            G.add_edge((parent_table, parent_column), (child_table, child_column))
+
+        # Topological sort on (table, column) pairs, then extract table names in order
+        sorted_nodes = list(nx.topological_sort(G))[::-1]
+        # Deduplicate table names, preserving order
+        seen = set()
+        delete_order = []
+        for table, _ in sorted_nodes:
+            if table not in seen:
+                delete_order.append(table)
+                seen.add(table)
+        return delete_order
+
     def truncate_table(self, table_name: str, cascade: bool = False, if_exists: bool = False) -> None:
         """Truncate a table. If if_exists is True, only truncate if the table exists (checked in a transaction)."""
         with self.connection() as conn:
@@ -290,28 +338,17 @@ class DbOps:
                 cur.execute(stmt)
                 cur.execute("COMMIT")
         
-    def trashy_truncate_table(self, table_name: str, cascade: bool = False, if_exists: bool = False) -> None:
-        """Truncate a table without using TRUNCATE, instead using DELETE where 1=1."""
+    def trashy_truncate_tables(self, tables:List[str]) -> None:
+        """Truncate tables without using TRUNCATE, instead using DELETE where 1=1."""
         with self.connection() as conn:
             with conn.cursor() as cur:
                 # Explicitly start a transaction block
                 cur.execute("BEGIN")
-                cur.execute("""
-                    SELECT EXISTS (
-                        SELECT 1 FROM information_schema.tables 
-                        WHERE table_schema = 'public' AND table_name = %s
-                    )
-                """, (table_name,))
-                result = cur.fetchone()
-                exists = result[0] if result else False
-                if not exists and if_exists:
-                    cur.execute("ROLLBACK")
-                    return
-                stmt = f"DELETE FROM {table_name} WHERE 1=1"
-                cur.execute(stmt)
-                if cascade:
-                    # Handle cascading deletes manually if needed
-                    pass
+                                
+                for table_name in tables:
+                    stmt = f"DELETE FROM {table_name} WHERE 1=1"
+                    cur.execute(stmt)
+                
                 cur.execute("COMMIT")
 
     def copy_table_structure(self, source_table: str, target_table: str, schema: Optional[str] = None, if_not_exists: bool = True) -> None:

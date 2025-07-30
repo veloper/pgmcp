@@ -16,7 +16,7 @@ class SpiderClosedReason(Enum):
     UNKNOWN          = "unknown"                        # Unknown reason, not pre-defined by Scrapy
 
     def is_failure(self) -> bool: return self in self.get_failures()
-    def is_success(self) -> bool: return self == self.FINISHED
+    def is_success(self) -> bool: return self in (self.FINISHED, self.UNKNOWN)
     
     def get_loggable_reason(self) -> str:
         """Return an explanation for why the spider was closed."""
@@ -42,8 +42,11 @@ class SpiderClosedReason(Enum):
             return "Unknown reason for closure, not pre-defined by Scrapy."
 
     @classmethod
-    def from_reported_reason(cls, reported_reason: str) -> "SpiderClosedReason":
+    def from_reported_reason(cls, reported_reason: str | None) -> "SpiderClosedReason":
         """Create a CloseSpiderReason from a reported reason string."""
+        if reported_reason is None:
+            return cls.UNKNOWN
+        
         if not isinstance(reported_reason, str):
             raise TypeError(f"Expected a string, got {type(reported_reason).__name__}.")
 
@@ -73,5 +76,4 @@ class SpiderClosedReason(Enum):
             cls.PAGECOUNT,
             cls.PAGECOUNT_NO_ITEM,
             cls.ERRORCOUNT,
-            cls.UNKNOWN
         ]

@@ -40,7 +40,7 @@ class JobStateExt:
             # Transition the crawl job to RUNNING status
             spider.job.crawl_job_model().run()
         
-    def spider_closed(self, spider: Spider, reported_reason: str):
+    def spider_closed(self, spider: Spider, reported_reason: str | None = None):
         with CrawlItem.session_context():
             reason = SpiderClosedReason.from_reported_reason(reported_reason)
             loggable_reason = reason.get_loggable_reason()

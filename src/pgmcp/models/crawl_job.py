@@ -82,7 +82,7 @@ class CrawlJob(Base):
     settings        : Mapped[dict[str, Any]]  = mapped_column(JSONB, nullable=False, default={})
     allowed_domains : Mapped[List[str]]       = mapped_column(JSONB, nullable=False, default=[])
     status          : Mapped[CrawlJobStatus]  = mapped_column( SQLEnum(CrawlJobStatus, name="crawl_job_status"), nullable=False, default=CrawlJobStatus.IDLE )
-    stats            : Mapped[dict[str, Any]]  = mapped_column(JSONB, nullable=True, default={})
+    stats           : Mapped[dict[str, Any]]  = mapped_column(JSONB, nullable=True, default={})
 
     # == Relationships ========================================================
     crawl_items           : Mapped[List[CrawlItem]] = relationship("CrawlItem", back_populates="crawl_job", cascade="all, delete-orphan")

@@ -5,7 +5,7 @@ from scrapy import signals
 from scrapy.crawler import Crawler
 from twisted.internet.task import LoopingCall
 
-from pgmcp.scrapy.models.crawl_job import CrawlJob
+from pgmcp.scrapy.models.crawl_job import CrawlJob, CrawlJobStatus
 from pgmcp.scrapy.models.log_level import LogLevel
 from pgmcp.scrapy.spider import Spider
 
@@ -30,12 +30,29 @@ class JobPeriodicStatusExt:
     # ---------------------------------------------------------------------------
    
     def on_tick(self, message="Periodic Stats") -> None:
-        """Called periodically to collect stats and update the job."""
+        """Called periodically to collect stats and update the job. Stops itself if job is finished."""
         if not self.crawl_job_id:
             return
-        
         with CrawlJob.session_context():
-            if crawl_job := CrawlJob.find(self.crawl_job_id):
+            crawl_job = CrawlJob.find(self.crawl_job_id)
+            if crawl_job:
+                # Use CrawlJobStatus enum for robust status checking
+                finished_statuses = {
+                    CrawlJobStatus.SUCCEEDED,
+                    CrawlJobStatus.FAILED,
+                    CrawlJobStatus.CANCELLED,
+                    CrawlJobStatus.PAUSED
+                }
+                if getattr(self, "looping_call", None) and getattr(self.looping_call, "running", False):
+                    if crawl_job.status in finished_statuses:
+                        self.looping_call.stop()
+                        crawl_job.log(
+                            f"Periodic status updates stopped: job is finished ({crawl_job.status.name}).",
+                            LogLevel.INFO,
+                            {"job_id": self.crawl_job_id, "status": crawl_job.status.name, "timestamp": datetime.now(timezone.utc).isoformat()}
+                        )
+                        # Optionally, perform additional cleanup or notification here
+                        return
                 data = self.get_periodic_data()
                 crawl_job.stats = data
                 crawl_job.save()
@@ -73,6 +90,8 @@ class JobPeriodicStatusExt:
 
     def spider_closed(self, spider, reason):
         self.on_tick("Final Stats")
+        if hasattr(self, "looping_call") and getattr(self.looping_call, "running", False):
+            self.looping_call.stop()
 
     # ---------------------------------------------------------------------------
     # Stats Collection Methods

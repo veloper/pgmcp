@@ -1,3 +1,5 @@
+import asyncio
+
 from asyncio.tasks import create_task
 from textwrap import dedent
 from typing import Annotated, Any, Dict, List, Literal, Tuple
@@ -10,7 +12,7 @@ from pgmcp.models.crawl_item import CrawlItem  # Import to ensure SQLAlchemy reg
 from pgmcp.models.crawl_job import CrawlJob
 from pgmcp.models.crawl_log import CrawlLog  # Import to ensure SQLAlchemy registration
 from pgmcp.payload import Payload
-from pgmcp.scrapy.job import Job
+from pgmcp.scraper.job import Job
 from pgmcp.settings import get_settings
 
 
@@ -177,6 +179,30 @@ async def start_job(ctx: Context, crawl_job_id: int) -> Dict[str, Any]:
         """)
 
         return Payload.create(crawl_job, message=instructions).model_dump()
+
+@mcp.tool(tags={"scrapy", "spider", "crawler", "job", "monitor"})
+async def monitor_job(
+    ctx: Context, 
+    crawl_job_id: int, 
+    timeout: Annotated[float, Field(description="Seconds to wait for job completion", ge=5, le=60)] = 30
+) -> Dict[str, Any]:
+    """Follow a Scrapy job by its ID and return its current status."""
+    async with CrawlJob.async_context():
+        crawl_job = await CrawlJob.find(crawl_job_id)
+        if not crawl_job:
+            raise ValueError(f"CrawlJob with ID {crawl_job_id} does not exist.")
+
+        async def reporter():
+            while True:
+                # Tick every 500ms to check job status
+                await asyncio.sleep(500)
+                await crawl_job.refresh()
+                
+                last_periodic_stats = crawl_job.stats
+                
+            # Get the job status
+        status = crawl_job.status
+        return Payload.create(status).model_dump()
 
 @mcp.tool(tags={"scrapy", "spider", "crawler", "job", "logs"})
 async def get_job_logs(

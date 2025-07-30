@@ -3,20 +3,18 @@ import asyncio, json
 from pathlib import Path
 from sys import stderr, stdout
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Self
-from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
-from scrapy.crawler import CrawlerProcess
 from scrapy.settings import SETTINGS_PRIORITIES, BaseSettings
 
-from pgmcp.scrapy.models.crawl_job import CrawlJob, CrawlJobStatus
-from pgmcp.scrapy.models.log_level import LogLevel
-from pgmcp.scrapy.settings import CustomSettings, Settings
+from pgmcp.scraper.models.crawl_job import CrawlJob
+from pgmcp.scraper.models.log_level import LogLevel
+from pgmcp.scraper.settings import CustomSettings, Settings
 from pgmcp.settings import get_settings
 
 
 if TYPE_CHECKING:
-    from pgmcp.scrapy.spider import Spider
+    from pgmcp.scraper.spider import Spider
 
 class Job(BaseModel):
     """Represents a web scraping job configuration decoupled from the database."""
@@ -92,7 +90,7 @@ class Job(BaseModel):
 
     def crawl_job_model(self) -> CrawlJob:
         """Get the CrawlJob instance associated with this job."""
-        from pgmcp.scrapy.models.crawl_job import CrawlJob
+        from pgmcp.scraper.models.crawl_job import CrawlJob
         if model := CrawlJob.find(self.id):
             return model
         raise ValueError(f"CrawlJob with id {self.id} not found.")

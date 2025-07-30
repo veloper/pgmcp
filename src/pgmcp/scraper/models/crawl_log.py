@@ -10,15 +10,15 @@ from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from pgmcp.scrapy.models.base import Base
-from pgmcp.scrapy.models.crawl_item import CrawlItem
-from pgmcp.scrapy.models.crawl_job import CrawlJob
-from pgmcp.scrapy.models.log_level import LogLevel
+from pgmcp.scraper.models.base import Base
+from pgmcp.scraper.models.crawl_item import CrawlItem
+from pgmcp.scraper.models.crawl_job import CrawlJob
+from pgmcp.scraper.models.log_level import LogLevel
 
 
 if TYPE_CHECKING:
-    from pgmcp.scrapy.models.crawl_item import CrawlItem
-    from pgmcp.scrapy.models.crawl_job import CrawlJob  
+    from pgmcp.scraper.models.crawl_item import CrawlItem
+    from pgmcp.scraper.models.crawl_job import CrawlJob  
 
 
 class CrawlLog(Base):

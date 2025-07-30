@@ -16,7 +16,7 @@ from .log_level import LogLevel
 
 if TYPE_CHECKING:
     from pgmcp.models.crawl_item import CrawlItem
-    from pgmcp.scrapy.job import Job
+    from pgmcp.scraper.job import Job
 
 
 class CrawlJobStatus(Enum):
@@ -131,7 +131,7 @@ class CrawlJob(Base):
         """Convert this CrawlJob to a ScrapyJob."""
         if not self.id:
             raise ValueError("CrawlJob must be saved before converting to Scrapy Job.")
-        from pgmcp.scrapy.job import Job  # circular import
+        from pgmcp.scraper.job import Job  # circular import
         
         
         return Job.from_crawl_job(

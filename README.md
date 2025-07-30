@@ -2,201 +2,139 @@
 
 ## Overview
 
-This project connects the pgkeen Docker image (with many AI/ML extensions pre-installed) to an MCP server, bridging AI Agents and the Apache AGE graph capabilities of PostgreSQL.
+PGMCP connects the `pgkeen` Docker image (with many AI/ML extensions pre-installed) to a mesh-based FastMCP backed server, bridging AI Agents with Apache AGE, low-level PostgreSQL administration, asynchronous crawling, knowledge base ingestion/curation, and more.
+
+## Servers
+
+### PgMCP Server (`server.py`)
+
+This is the main FastMCP server acting as the main server for all of the sub-servers below. It provides a unified interface for managing the various components of the PGMCP ecosystem and it kept focused on its routing and composition role. All of the sub-server below are 'mount'ed to this server.
+
+Each of the sub-servers henceforth fit under the umbrella of supporting `pgkeen` Postgresql -- leveraging its extensive collection of install extensions.
 
 
-## Architecture
+> [!INFO]  
+> In the future these sub-servers may be spun off into their own FastMCP server projects.
 
-The pgmcp library uses Larman's approach with its design emphasizing high cohesion and low coupling.
+### Apache AGE Server (`server_age.py`)
 
-### Design
-- Asynchronous database operations through asyncpg driver
-- Pydantic-based model validation and coercion
-- Strict use of Python 3.11+ `typing` features
-- Consistent entity naming conventions for improved recall by AI/LLMs
-  
+These tools provide an interface for AI Agents to manage multiple graphs in Apache AGE. It exposes tools for creating, updating, administering, and visualizing graphs.
 
-### Layers
-- **Data**: Apache AGE on PostgreSQL:16
-- **Interface**: `ApacheAGE` Python class acting as the repository between Data and Models.
-- **Models**: Agnostic Pydantic models (`AgGraph`, `AgVertex`, `AgEdge`, and related classes)
-- **Portability**: Simple import/export to and from NetworkX, JSON, and other formats.
+| Tool Name               | Purpose/Description                                                                 | Arguments                                                                                   |
+|-------------------------|-------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|
+| `get_or_create_graph`   | Get or create a graph with the specified name.                                      | `graph_name: str`                                                                           |
+| `list_graphs`           | List all graph names in the database.                                               |                                                                                             |
+| `upsert_graph`          | Upsert both vertices and edges into the specified graph (deep merge).                | `graph_name: str`, `vertices: List[Dict[str, Any]]`, `edges: List[Dict[str, Any]]`          |
+| `upsert_edge`           | Insert or update an edge's properties in a graph non-destructively.                 | `graph_name: str`, `label: str`, `edge_start_ident: str`, `edge_end_ident: str`, `properties: Dict[str, Any]` |
+| `upsert_vertex`         | Insert or update a vertex's properties in a graph non-destructively.                | `graph_name: str`, `vertex_ident: str`, `label: str`, `properties: Dict[str, Any]`          |
+| `drop_graphs`           | Drop one or more graphs by name.                                                    | `graph_names: List[str]`                                                                    |
+| `drop_vertex`           | Remove a vertex by ident.                                                           | `graph_name: str`, `vertex_ident: str`                                                      |
+| `drop_edge`             | Remove an edge by ident.                                                            | `graph_name: str`, `edge_ident: str`                                                        |
+| `generate_visualization`| Generate a single-page HTML file visualizing a graph using vis.js and pyvis.        | `graph_name: str`                                                                           |
 
 
-### Topology
+### Crawl Server (`server_crawl.py`)
 
-```shell
-AgGraph                  
-├── vertices: AgVertices : RootModel[List[AgVertex]]
-│   └── AgVertex    
-│       ├── ident      : str         # @property -> properties.ident
-│       ├── id         : int | None  # AGE managed ID
-│       ├── label      : str
-│       └── properties : AgProperties : RootModel[Dict[str, Any]]
-│           ├── "ident"    : str (required)
-│           └── "whatever" : "you want" (Union[str, int, float, bool, None, Dict[...], List[...]])
-└── edges: AgEdges : RootModel[List[AgEdge]]
-    └── AgEdge
-        ├── label       : str 
-        ├── ident       : str        # @property -> properties.ident
-        ├── start_ident : str        # @property -> properties.start_ident
-        ├── end_ident   : str        # @property -> properties.end_ident
-        ├── id          : int | None # AGE managed ID
-        ├── start_id    : int | None # AGE managed ID
-        ├── end_id      : int | None # AGE managed ID
-        └── properties  : RootModel[Dict[str, Any]]
-            ├── "ident"       : str (required)
-            ├── "start_ident" : str (required)
-            ├── "end_ident"   : str (required)
-            └── "whatever"    : "you want" (Union[str, int, float, bool, None, Dict[...], List[...]])
-```
+These tools offer a unified interface for AI Agents to orchestrate, monitor, and analyze web crawling jobs with Scrapy and PostgreSQL, supporting the full job lifecycle as well as metadata and log management.
 
-### Identifiers
+Scrapy's configuration is flexible and eventually exposable. Sensible defaults for local crawling are set for now. The toolset streamlines job management and delivers detailed insights into job execution and results.
 
-The identifiers (`Ident`s) are designed to minimize issues with stemming, n-gramming, or tokenization by AIs/LLMs, providing more consistent entity recall.
 
-```python
-ident = RoyalDescription.generate(words=3, delimiter="_") # => "magnificent_ancient_king"
-```
 
-Identifiers are auto-generated when using the various mutation methods on the `AgGraph`. Alternatively, they can be directly set with those same methods.
+| Tool Name            | Purpose/Description                                                                 | Arguments                              |
+|----------------------|-------------------------------------------------------------------------------------|-------------------------------------------------------|
+| `create_job`         | Define a new CrawlJob in an IDLE state.                                           | `start_urls: List[str]`, `depth: int = 3` |
+| `start_job`          | Enqueue a CrawlJob by its ID to be run by the Scrapy engine.                      | `crawl_job_id: int`                       |
+| `monitor_job`        | Follow a CrawlJob, reporting process to the client, for a max time.               | `crawl_job_id: int, timeout: float = 30.0` |
+| `get_job`            | Get extra information about a specific CrawlJob by its ID.                        | `job_id: int`                             |
+| `list_jobs`          | List all CrawlJobs and their metadata.                                            | `per_page: int = 15`, `page: int = 1`, `sort: str = None`, `order: str = None` |
+| `get_job_logs`       | Get detailed logs for a specific CrawlJob by its ID.                              | `per_page: int = 15`, `page: int = 1`, `sort: str = None`, `order: str = None` |
 
-### Local Query Building
 
-The API provides a set of chainable query builder helpers, all of which are cached for performance.
+### PSQL Server (`server_psql.py`)
 
-```python
-# Vertex queries
-results : List[AgVertex] = graph.vertices.label("Person").prop("age", 30).all()
+This server provides a set of tools for low-level PostgreSQL administration, including executing SQL queries, managing extensions, and handling functions. It is designed to be used by AI Agents for advanced database management tasks.
 
-# Edge queries  
-connections = graph.edges.start_ident("person1").label("KNOWS").all()
-```
+> [!INFO] 
+> Basic enforcement of SQL query safety is provided, but it is recommended to use these tools with caution, especially in production environments.
 
-Checkout `src/pgmcp/ag_query_builder.py` for more info and the available steps and drains.
 
-### NetworkX
+| Tool Name                        | Purpose/Description                                                      | Arguments                                                                                      |
+|-----------------------------------|--------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
+| `select`                         | Execute a SQL SELECT query and return rows.                              | `query: str`, `params: Dict[str, Any] = {}`                                                    |
+| `delete`                         | Execute a SQL DELETE query.                                              | `query: str`, `params: Dict[str, Any] = {}`                                                    |
+| `insert`                         | Execute a SQL INSERT query.                                              | `query: str`, `params: Dict[str, Any] = {}`                                                    |
+| `update`                         | Execute a SQL UPDATE query.                                              | `query: str`, `params: Dict[str, Any] = {}`                                                    |
+| `upsert`                         | Execute a SQL UPSERT (INSERT ... ON CONFLICT UPDATE) query.              | `query: str`, `params: Dict[str, Any] = {}`                                                    |
+| `create_extension_if_not_exists`  | Create a PostgreSQL extension if it does not exist.                      | `extension_name: str`                                                                          |
+| `create_or_replace_function`      | Create or replace a PostgreSQL function.                                 | `sql: str`                                                                                     |
+| `drop_function`                   | Drop a PostgreSQL function by name.                                      | `function_name: str`                                                                           |
+| `list_functions`                  | List all functions in the specified schema.                              | `schema: str = "public"`                                                                       |
+| `http_request`                    | Make an HTTP request using the pg_http extension.                        | `url: str`, `method: str = "GET"`, `headers: Dict[str, str] = {}`, `body: Dict[str, Any] = {}` |
 
-You can use `graph.to_networkx()` to gain full access to NetworkX's extensive set of features. When you're done, you can easily convert back using `AgGraph.from_networkx()`.
 
-### Dependencies
+### Knowledge Base Server (`server_kb.py`) [*Work in Progress*]
 
-- **Python**: >= 3.11 or higher
-- **PostgreSQL**: >= 16.0 w/ Apache AGE installed as an additional extension
-- **Dependencies**: uv for installation.
+These tools provide a unified interface for AI Agents to manage, curate, and ingest technical documentation and web content into a hierarchical knowledge base. The system supports corpus discovery, crawl job curation, and ingestion workflows, ensuring only high-quality, relevant documentation is added.
 
-### Settings
+| Tool Name                  | Purpose/Description                                                                                      | Arguments                                                      |
+|----------------------------|----------------------------------------------------------------------------------------------------------|----------------------------------------------------------------|
+| `find_corpus`              | Find a corpus by its name within the knowledge base.                                                     | `corpus_name: str`                                             |
+| `ingest_crawl_job`         | Ingest curated CrawlItems from a CrawlJob into the knowledge base, following AI-driven curation.         | `crawl_job_id: int`                                            |
+| `list_corpus`              | List all corpora in the knowledge base with pagination and sorting.                                     | `per_page: int = 15`, `page: int = 1`, `sort: str = None`, `order: str = None` |
+| `get_or_create_corpus`     | Get or create a corpus with the specified name.                                                          | `corpus_name: str`                                            |
+| `delete_corpus`            | Delete a corpus by its identifier.                                                                 | `corpus_id: int`                                               |
+| `list_documents`           | List all documents in a corpus with pagination and sorting.                                           | `corpus_id: int`, `per_page: int = 15`, `page: int = 1`, `sort: str = None`, `order: str = None` |
+| `get_document`             | Get a specific document by its identifier.                                                              | `document_id: int`                                             |
+| `search_documents`         | Search for documents in a corpus using a query string.                                                  | `corpus_id: int`, `query: str`, `per_page: int = 15`, `page: int = 1`, `sort: str = None`, `order: str = None` |
+| `create_document`          | Create a new document in a corpus.                                                                       | `corpus_id: int`, `title: str`, `content: str`               |
 
-All settings are managed through environment variables and `.env` files, following `pydantic-settings` rules.
+## Server Setup
 
-Copy `.env.example` to `.env` and fill in the required values. See Example below:
+1. Clone the repository:
 
-```
-# Application Configuration
-APP__LOG_LEVEL=INFO
+    ```bash
+    git clone <repository-url> /your/local/path/to/pgmcp
+    ```
 
-# DB
-DB__CONNECTIONS='{
-    "primary": {
-        "dsn": "postgresql://username@localhost:5432/db",
-        "echo": true|false,
+2. Navigate to the project directory:
+
+    ```bash
+    cd /your/local/path/to/pgmcp
+    ```
+3. Install the required dependencies:
+
+    ```bash
+    uv sync
+    ```
+4. Run the server:
+
+    ```bash
+    uv run pgmcp run --port 8000 --transport streamable-http
+    ```
+
+## Client Setup
+
+### VSCODE
+1. Open Command Palette (Cmd+Shift+P or Ctrl+Shift+P).
+2. Select `MCP: Add Server...`
+3. Choose "HTTP" option.
+4. Enter the server URL (e.g., `http://localhost:8000/mcp/`).
+5. Enter a "server id" (e.g., `pgmcp`).
+6. Select `Global` for the scope.
+7. Done. (It should appear in the `extensions` sidebar.)
+
+### Roo / Cline / Claude MCP Setup
+```json
+{
+  "mcpServers": {
+    "pgmcp": {
+      "url": "http://localhost:7999/mcp/",
+      "type": "streamable-http",
+      "headers": {
+        "Content-Type": "application/json"
+      }
     }
-}'
-
-# AGE
-AGE__IDENT_PROPERTY="ident"
-AGE__START_IDENT_PROPERTY="start_ident"
-AGE__END_IDENT_PROPERTY="end_ident"
+  }
+}
 ```
----
-
-## Usage
-
-The primary interface for database operations revolves around the `ApacheAGE` repository class and the `Ag*` classes. See the example usage below:
-
-```python
-from pgmcp.apache_age import ApacheAGE
-from pgmcp.ag_graph import AgGraph
-
-age = ApacheAGE()
-
-# Create (empty graph)
-graph : AgGraph = await age.create_graph("my_graph")
-graph : AgGraph = await age.get_or_create_graph("my_graph")
-
-await age.ensure_graph(graph.name)
-
-# Existential 
-if await age.graph_exists(graph.name): print("Graph exists!")
-
-# Retrieval
-graph_copy = await age.get_graph(graph.name)
-
-# Removal
-await age.drop_graph(graph.name)
-
-# Truncation
-await age.truncate_graph(graph.name)
-
-# Cypher Queries (low-level)
-records = await age.cypher_fetch("my_graph", "MATCH (n) RETURN n")
-records = await age.cypher_execute("my_graph", "MATCH (n) DETACH DELETE n")
-
-# Mutation (add vertex)
-my_vertex = graph_copy.add_vertex(
-    label="Person",
-    properties={
-        "ident": "john_doe",
-        "name": "John Doe",
-        "age": 30
-    }
-)
-
-# Upsert entire graph (if `graph_copy` and `graph` have the same `name`, this will overwrite the existing graph in the database)
-updated_graph = await age.upsert_graph(graph_copy)
-
-# To persist a copy under a new name, assign a new name before upserting
-graph_copy.name = "my_graph_v2"
-updated_graph = await age.upsert_graph(graph_copy)
-
-# Convert to/from models
-vertex         : AgVertex = AgVertex.from_agtype_record(record)
-back_to_record : AgtypeRecord = vertex.to_agtype_record()
-
-# Convert to/from dict
-data_dict        : dict = vertex.to_dict()
-record_from_dict : AgVertex = AgVertex.from_dict(data_dict)  # from_dict is a classmethod
-
-# Convert to/from JSON
-json_str         : str = vertex.to_json()
-record_from_json : AgVertex = AgVertex.from_json(json_str)   # from_json is a classmethod
-
-# Convert to/from NetworkX
-nx_graph : nx.MultiDiGraph = graph.to_networkx()
-graph_from_nx : AgGraph = AgGraph.from_networkx(nx_graph)
-```
-
-
-## Classes
-
-| Class                  | Description                                                                 |
-|------------------------|-----------------------------------------------------------------------------|
-| `AgGraph`              | Top-level container for the graph structure.                                |
-| `AgEntity`             | Base for vertices and edges.                                                |
-| `AgVertex`             | Node object within the graph.                                               |
-| `AgEdge`               | Edge object connecting two vertices.                                        |
-| `AgProperties`         | Property dictionary for vertices and edges.                                 |
-| `AgVertices`           | Collection manager for vertex objects with query helpers.                   |
-| `AgEdges`              | Collection manager for edge objects with query helpers.                     |
-| `AgMutation`           | Represents an atomic mutation (add, remove, update) on a vertex or edge.    |
-| `AgPatch`              | Computes and stores the minimal set of mutations to transform one graph to another. |
-| `AgQueryBuilder`       | Chainable, cached query builder for vertices and edges.                     |
-| `RoyalDescription`     | Utility for generating canonical, AI-friendly entity identifiers.           |
-| `ListRootModel`        | Pydantic root model for lists with graph reference propagation.             |
-| `LRUCache`             | Simple least-recently-used cache for query optimization.                    |
-| `QueryStringCodec`     | Bidirectional codec for parsing and encoding query strings.                 |
-| `DataSourceName`       | Database connection string parser and validator.                            |
-| `DatabaseConnectionSettings` | Pydantic model for a single database connection configuration.        |
-| `ApacheAGE`            | Repository interface for database operations against Apache AGE/PostgreSQL. |
-| `Environment`          | Enum and helpers for environment detection and .env file selection.         |
-| `AgtypeRecord`         | Bridge between Python objects and PostgreSQL agtype format.                 |

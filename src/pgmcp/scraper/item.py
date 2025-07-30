@@ -6,12 +6,12 @@ import scrapy
 
 from sqlalchemy import select
 
-from pgmcp.scrapy.models.log_level import LogLevel
+from pgmcp.scraper.models.log_level import LogLevel
 
 
 if TYPE_CHECKING:
-    from pgmcp.scrapy.models.crawl_item import CrawlItem
-    from pgmcp.scrapy.models.crawl_job import CrawlJob
+    from pgmcp.scraper.models.crawl_item import CrawlItem
+    from pgmcp.scraper.models.crawl_job import CrawlJob
 
 class Item(scrapy.Item):
     crawl_item_id    = scrapy.Field(description="ID representing this item in the database")
@@ -28,7 +28,7 @@ class Item(scrapy.Item):
         """Sync the item data to the database."""
         crawl_item = self.crawl_item()
         if not crawl_item: 
-            from pgmcp.scrapy.models.crawl_item import CrawlItem
+            from pgmcp.scraper.models.crawl_item import CrawlItem
             crawl_item = CrawlItem()
 
         def decode_headers(headers):
@@ -72,13 +72,13 @@ class Item(scrapy.Item):
 
     def crawl_item(self) -> Optional[CrawlItem]:
         if not self.get('crawl_item_id'): return None
-        from pgmcp.scrapy.models.crawl_item import CrawlItem
+        from pgmcp.scraper.models.crawl_item import CrawlItem
         
         return CrawlItem.find(int(self['crawl_item_id']))
 
     def crawl_job(self) -> Optional[CrawlJob]:
         if not self.get('crawl_job_id'): return None
-        from pgmcp.scrapy.models.crawl_job import CrawlJob
+        from pgmcp.scraper.models.crawl_job import CrawlJob
         return CrawlJob.find(int(self['crawl_job_id']))
 
     def log(self, message: str, level: LogLevel = LogLevel.INFO, context: Dict[str, Any] | None = None) -> None:

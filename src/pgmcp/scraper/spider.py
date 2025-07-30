@@ -10,8 +10,8 @@ from scrapy.crawler import CrawlerRunner
 from scrapy.linkextractors import LinkExtractor
 from scrapy.spiders import CrawlSpider, Rule
 
-from pgmcp.scrapy.item import Item
-from pgmcp.scrapy.job import Job
+from pgmcp.scraper.item import Item
+from pgmcp.scraper.job import Job
 
 
 class Spider(CrawlSpider):

@@ -6,10 +6,10 @@ import click
 
 from scrapy.crawler import CrawlerProcess
 
-import pgmcp.scrapy.models
+import pgmcp.scraper.models
 
-from pgmcp.scrapy.models.crawl_job import CrawlJob
-from pgmcp.scrapy.spider import Spider
+from pgmcp.scraper.models.crawl_job import CrawlJob
+from pgmcp.scraper.spider import Spider
 from pgmcp.settings import get_settings
 
 

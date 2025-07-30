@@ -7,14 +7,14 @@ from sqlalchemy import ForeignKey, Integer, String, Text  # Added Text and Forei
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from pgmcp.scrapy.models.base import Base
+from pgmcp.scraper.models.base import Base
 
 from .log_level import LogLevel
 
 
 if TYPE_CHECKING:
-    from pgmcp.scrapy.models.crawl_job import CrawlJob
-    from pgmcp.scrapy.models.crawl_log import CrawlLog
+    from pgmcp.scraper.models.crawl_job import CrawlJob
+    from pgmcp.scraper.models.crawl_log import CrawlLog
 
 class CrawlItem(Base):
     """Represents a web crawling job."""
@@ -43,7 +43,7 @@ class CrawlItem(Base):
     
     def log(self, message: str, level: LogLevel | None = None, context: Dict[str, Any] | None = None) -> CrawlLog:
         """Create and save a log entry for this crawl item."""
-        from pgmcp.scrapy.models.crawl_log import CrawlLog
+        from pgmcp.scraper.models.crawl_log import CrawlLog
         
         if level is None:
             level = LogLevel.INFO  # Default to INFO if no level is provided

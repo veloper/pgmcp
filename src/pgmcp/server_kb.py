@@ -31,27 +31,6 @@ OVERVIEW = """
 
     ## Data Model Overview:
     
-    ### Polymorphic Classes:
-    - `SectionItem`: 
-        - **Desc:** Represents a polymorphic join table that connects various sectionable types.
-        - **Attributes:** 
-            - section_id: int,  
-            - sectionable_type: str, 
-            - sectionable_id: int, 
-            - position: int
-        - **Relationships:**
-            - section: Section (back_populates="section_items") 
-            - sectionable: Union[Paragraph, Section, List, Table, CodeBlock]
-    - `ListingItem`:
-        - **Desc:** Represents an item in a listing, which can be a listing, paragraph, table
-        - **Attributes:** 
-            - listing_id: int, 
-            - position: int, 
-            - listable_type: str, 
-            - listable_id: int
-        - **Relationships:**
-            - listing: Listing (back_populates="listing_items")
-            - listable: Union[Listing, Paragraph, Table, CodeBlock]
             
     - `Content`: 
         - **Desc:** Represents the content of a document, which can be text, code, or whatever depending on the source.
@@ -65,37 +44,20 @@ OVERVIEW = """
                 - documents: List[Document]
                     - `Document`
                         - metadata: Dict[str, Any]
-                        - content: Content <see above>
-                        - sections: List[Section]
-                            - `Section`
-                                - position: int
-                                - title: str | None
-                                - content: Content <see above>
-                                - section_items: List[SectionItem]
-                                    - `SectionItem` <see above>
+                        - body: Element
+                            - `Element`
+                                - type: str (body, section, paragraph, sentence, listing, table, table_row, table_row_cell, code_block)
+                                - content: Content (e.g., text, code, etc.)
+                                - embedding : Optional[Embedding] (if applicable)
+                                - attributes: Dict[str, Any] (e.g., title for sections)
+                                - left: int (for tree structure)
+                                - right: int (for tree structure)
+                                - level: int (for tree structure)
+                                - position: int (for tree structure)
+                                - children: List[Element] (recursive structure)
+                                - parent: Element | None (for tree structure)
+                                - document: Document (back-reference to the document only on body elements)
     
-    ### Sectionable Type Hierarchy:
-    - `Section` - Recursive structure that allows this to keep going indefinitely.
-    - `Paragraph`
-        - content: Content <see above>
-        - sentences: List[Sentence]
-            - `Sentence`
-                - content: Content <see above>
-    - `List`
-        - listing_items: List[ListingItem]
-            - `ListingItem`
-                - content: Content <see above>
-                - listable: Listable <see above>
-    - `Table`
-        - content: Content <see above>
-        - table_rows: List[TableRow]
-            - `TableRow`
-                - content: Content <see above>
-                - table_row_cells: List[TableRowCell]
-                    - `TableRowCell`
-                        - content: Content <see above>
-    - `CodeBlock`
-        - content: Content <see above>
                     
     ## Usage
     This toolset provides a set of tools for ingesting, and recalling from the knowledge base.
@@ -106,8 +68,8 @@ OVERVIEW = """
     
     Example:
     
-    - `corpora__documents__ingest :library_id, :corpus_id, :document_uri`
-    - `corpora__documents__get :library_id, :corpus_id, :document_id`
+    - `documents__ingest :library_id, :corpus_id, :document_uri`
+    - `documents__get :library_id, :corpus_id, :document_id`
     - `documents__get :id` # absolute allows simplified access on a root resource
     - `questions__search :query, limit=10` # search for questions similar to a given query etc.
 """
@@ -141,7 +103,7 @@ PROMPT_CURATE_CRAWL_ITEMS = dedent(f"""
     You **MUST** output a comma-separated list of **ID**s that represent your final curation that represents the complete and unabridged set of relevant technical documentation pages to add to the knowledge base. (see illustrative example below)
 
     ### INPUT
-    You will be provided with a list of raw webpage metadata from which you will base your curation.  see illustrative example below)
+    You will be provided with a list of raw webpage metadata from which you will base your curation.  See illustrative example below)
 
 
     ## ILLUSTRATIVE EXAMPLE
@@ -196,11 +158,6 @@ PROMPT_CURATE_CRAWL_ITEMS = dedent(f"""
 # MCP Setup
 # =====================================================
 mcp = FastMCP(name="Knowledge Base Service", instructions=OVERVIEW)
-
-# =====================================================
-# Settings
-# =====================================================
-settings = get_settings()
 
 # =====================================================
 # =====================================================
@@ -323,6 +280,11 @@ async def _ingest_curated_crawl_items(ctx: Context, crawl_job_id: int, curated_c
                     """Convert the work item to a markdown document."""
                     return MdDocument.from_str(
                         text=self.crawl_item_body,
+                
+                def get_markdown_document(self) -> MdDocument:
+                    """Convert the work item to a markdown document."""
+                    return MdDocument.from_str(
+                        text=self.crawl_item_body,
                         title=self.crawl_item_headers.get("title", "Untitled Document")
                     )
                     
@@ -359,7 +321,7 @@ async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> None:
     response = await ctx.sample(
         system_prompt=system_message,
         messages=sample_messages,
-        temperature=0.1, 
+        temperature=0, 
         max_tokens=2000,
     )
 
@@ -391,6 +353,6 @@ async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> None:
 
 
 
-@mcp.prompt( name="curate_crawl_job_items", )
+@mcp.prompt( name="curate_crawl_job_items")
 async def curate_crawl_job_items(ctx: Context, crawl_job_id: int) -> List[PromptMessage]:
     return await _curate_crawl_job_items(ctx, crawl_job_id)

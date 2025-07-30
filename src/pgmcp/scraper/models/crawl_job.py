@@ -8,15 +8,15 @@ from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import JSON, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from pgmcp.scrapy.models.base import Base
+from pgmcp.scraper.models.base import Base
 
 from .log_level import LogLevel
 
 
 if TYPE_CHECKING:
-    from pgmcp.scrapy.job import Job
-    from pgmcp.scrapy.models.crawl_item import CrawlItem
-    from pgmcp.scrapy.models.crawl_log import CrawlLog
+    from pgmcp.scraper.job import Job
+    from pgmcp.scraper.models.crawl_item import CrawlItem
+    from pgmcp.scraper.models.crawl_log import CrawlLog
 
 
 class CrawlJobStatus(Enum):
@@ -129,7 +129,7 @@ class CrawlJob(Base):
         """Convert this CrawlJob to a ScrapyJob."""
         if not self.id:
             raise ValueError("CrawlJob must be saved before converting to Scrapy Job.")
-        from pgmcp.scrapy.job import Job  # circular import
+        from pgmcp.scraper.job import Job  # circular import
         return Job.from_crawl_job(
             id=self.id,
             start_urls=self.start_urls,
@@ -141,7 +141,7 @@ class CrawlJob(Base):
 
     def log(self, message: str, level: LogLevel | None = None, context: Dict[str, Any] | None = None) -> CrawlLog:
         """Create and save a log entry for this crawl job."""
-        from pgmcp.scrapy.models.crawl_log import CrawlLog
+        from pgmcp.scraper.models.crawl_log import CrawlLog
         
         if level is None:
             level = LogLevel.INFO

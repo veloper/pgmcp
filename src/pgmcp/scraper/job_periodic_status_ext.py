@@ -5,9 +5,9 @@ from scrapy import signals
 from scrapy.crawler import Crawler
 from twisted.internet.task import LoopingCall
 
-from pgmcp.scrapy.models.crawl_job import CrawlJob, CrawlJobStatus
-from pgmcp.scrapy.models.log_level import LogLevel
-from pgmcp.scrapy.spider import Spider
+from pgmcp.scraper.models.crawl_job import CrawlJob, CrawlJobStatus
+from pgmcp.scraper.models.log_level import LogLevel
+from pgmcp.scraper.spider import Spider
 
 
 class JobPeriodicStatusExt:

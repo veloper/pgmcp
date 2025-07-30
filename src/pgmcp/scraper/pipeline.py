@@ -4,11 +4,11 @@ from typing import Awaitable, Callable
 
 from scrapy import signals
 
-from pgmcp.scrapy.item import Item
-from pgmcp.scrapy.models.base import Self
-from pgmcp.scrapy.models.crawl_item import CrawlItem
-from pgmcp.scrapy.spider import Spider
-from pgmcp.scrapy.spider_closed_reason import SpiderClosedReason
+from pgmcp.scraper.item import Item
+from pgmcp.scraper.models.base import Self
+from pgmcp.scraper.models.crawl_item import CrawlItem
+from pgmcp.scraper.spider import Spider
+from pgmcp.scraper.spider_closed_reason import SpiderClosedReason
 
 
 class Pipeline:

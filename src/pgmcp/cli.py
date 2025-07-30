@@ -47,6 +47,27 @@ def cli(ctx: click.Context) -> None:
     ctx.obj = Context()
 
 
+#  fastmcp run ./src/mymcp/server.py --port 7999 --host 0.0.0.0 --transport streamable-http --log-level=DEBUG
+
+@cli.command()
+@click.option('--port', default=7999, help='Port to run the server on.')
+@click.option('--host', default='0.0.0.0', help='Host to run the server on.')
+@click.option('--transport', type=click.Choice(['sse', 'streamable-http', 'stdio']), help='Transport to use.', default='streamable-http')
+@click.option('--log-level', type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']), default='DEBUG', help='Log level to use.')
+@click.pass_obj
+def run(ctx: Context, port: int, host: str, transport: str, log_level: str) -> None:
+    """Run the PGMCP server."""
+    cmd = "fastmcp"
+    spec = ctx.settings().app.package_path / "server.py"
+    full_cmd = [str(cmd), "run", str(spec), "--port", str(port), "--host", host, "--transport", transport, "--log-level", log_level]
+    
+    console.log(f"Running server with command: {' '.join(full_cmd)}")
+    
+    os.chdir(str(ctx.settings().app.root_path))
+    os.execvp(str(cmd), full_cmd)
+    
+
+
 @cli.group()
 @click.pass_obj
 def db(ctx: Context) -> None:
@@ -273,7 +294,7 @@ def doctor(ctx: Context, env: str, fix: bool) -> None:
                         # cur.execute(f"SELECT has_function_privilege('{db.get_dcs().username}', '{schema}', 'EXECUTE')")
                         # result = cur.fetchone()
                         # if not result or (result and not result[0]):
-                        #     self.notes.append(f"User {db.get_dcs().username} does not have EXECUTE privilege on all functions in the {schema} schema.")
+                        #     self.notes.append(f"User {db.get_dcs().username} does not have EXECUTE privilege on all functions in the schema.")
                     except Exception as e:
                         self.notes.append(f"Could not check privileges for schema '{schema}': {e}")
                     

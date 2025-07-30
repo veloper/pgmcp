@@ -4,10 +4,10 @@ from typing import Any, Dict
 from scrapy import signals
 from scrapy.crawler import Crawler
 
-from pgmcp.scrapy.models.crawl_item import CrawlItem
-from pgmcp.scrapy.models.crawl_job import CrawlJob
-from pgmcp.scrapy.spider import Spider
-from pgmcp.scrapy.spider_closed_reason import SpiderClosedReason
+from pgmcp.scraper.models.crawl_item import CrawlItem
+from pgmcp.scraper.models.crawl_job import CrawlJob
+from pgmcp.scraper.spider import Spider
+from pgmcp.scraper.spider_closed_reason import SpiderClosedReason
 
 
 class JobStateExt:

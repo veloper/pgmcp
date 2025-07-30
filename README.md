@@ -2,23 +2,22 @@
 
 ## Overview
 
-PGMCP connects the `pgkeen` Docker image (with many AI/ML extensions pre-installed) to a mesh-based FastMCP backed server, bridging AI Agents with Apache AGE, low-level PostgreSQL administration, asynchronous crawling, knowledge base ingestion/curation, and more.
+PGMCP connects the `pgkeen` Docker image (with many AI/ML extensions pre-installed) to a mesh-based FastMCP-backed server. It bridges AI Agents with Apache AGE, low-level PostgreSQL administration, asynchronous crawling, knowledge base ingestion/curation, and more.
 
 ## Servers
 
 ### PgMCP Server (`server.py`)
 
-This is the main FastMCP server acting as the main server for all of the sub-servers below. It provides a unified interface for managing the various components of the PGMCP ecosystem and it kept focused on its routing and composition role. All of the sub-server below are 'mount'ed to this server.
+This is the main FastMCP server, acting as the central hub for all sub-servers listed below. It provides a unified interface for managing the various components of the PGMCP ecosystem and remains focused on its routing and composition role. All of the sub-servers below are mounted to this server.
 
-Each of the sub-servers henceforth fit under the umbrella of supporting `pgkeen` Postgresql -- leveraging its extensive collection of install extensions.
-
+Each sub-server is under the umbrella of supporting `pgkeen` PostgreSQL, leveraging its extensive collection of installable extensions.
 
 > [!NOTE]  
-> In the future these sub-servers may be spun off into their own FastMCP server projects.
+> In the future, these sub-servers may be spun off into their own FastMCP server projects.
 
 ### Apache AGE Server (`server_age.py`)
 
-These tools provide an interface for AI Agents to manage multiple graphs in Apache AGE. It exposes tools for creating, updating, administering, and visualizing graphs.
+These tools provide an interface for AI Agents to manage multiple graphs in Apache AGE. They expose tools for creating, updating, administering, and visualizing graphs.
 
 | Tool Name               | Purpose/Description                                                                 | Arguments                                                                                   |
 |-------------------------|-------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|
@@ -35,11 +34,9 @@ These tools provide an interface for AI Agents to manage multiple graphs in Apac
 
 ### Crawl Server (`server_crawl.py`)
 
-These tools offer a unified interface for AI Agents to orchestrate, monitor, and analyze web crawling jobs with Scrapy and PostgreSQL, supporting the full job lifecycle as well as metadata and log management.
+These tools offer a unified interface for AI Agents to orchestrate, monitor, and analyze web crawling jobs with Scrapy and PostgreSQL. They support the full job lifecycle as well as metadata and log management.
 
-Scrapy's configuration is flexible and eventually exposable. Sensible defaults for local crawling are set for now. The toolset streamlines job management and delivers detailed insights into job execution and results.
-
-
+Scrapy's configuration is flexible and will eventually be exposable. Currently, sensible defaults are set for local crawling. The crawl toolset streamlines job management and provides detailed insights into job execution and results.
 
 | Tool Name            | Purpose/Description                                                                 | Arguments                              |
 |----------------------|-------------------------------------------------------------------------------------|-------------------------------------------------------|
@@ -124,7 +121,7 @@ These tools provide a unified interface for AI Agents to manage, curate, and ing
 6. Select `Global` for the scope.
 7. Done. (It should appear in the `extensions` sidebar.)
 
-### Roo / Cline / Claude MCP Setup
+### Roo / Cline / Claude
 ```json
 {
   "mcpServers": {

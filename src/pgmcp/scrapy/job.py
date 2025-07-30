@@ -18,8 +18,6 @@ from pgmcp.settings import get_settings
 if TYPE_CHECKING:
     from pgmcp.scrapy.spider import Spider
 
-_settings = get_settings()
-
 class Job(BaseModel):
     """Represents a web scraping job configuration decoupled from the database."""
     
@@ -47,8 +45,8 @@ class Job(BaseModel):
 
         Done via a subprocess to avoid the hassle of asyncio conflicts.
         """
-        root_path         : Path = _settings.app.root_path
-        pkg_path          : Path = _settings.app.package_path.resolve()
+        root_path         : Path = get_settings().app.root_path
+        pkg_path          : Path = get_settings().app.package_path.resolve()
         executable_path   : Path = pkg_path / "scrapy" / "cli.py"
         working_dir_path  : Path = root_path
         

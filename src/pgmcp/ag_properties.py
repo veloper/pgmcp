@@ -8,10 +8,9 @@ from pgmcp.royal_description import RoyalDescription
 from pgmcp.settings import get_settings
 
 
-settings = get_settings()
-IDENT_PROPERTY      : str = settings.age.ident_property
-START_IDENT_PROPERTY: str = settings.age.start_ident_property
-END_IDENT_PROPERTY  : str = settings.age.end_ident_property
+IDENT_PROPERTY      : str = get_settings().age.ident_property
+START_IDENT_PROPERTY: str = get_settings().age.start_ident_property
+END_IDENT_PROPERTY  : str = get_settings().age.end_ident_property
 
 def generate_ident() -> str:
     """Generate a new identifier."""

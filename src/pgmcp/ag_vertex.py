@@ -10,8 +10,7 @@ from pgmcp.settings import get_settings
 from pgmcp.utils import deep_merge
 
 
-settings = get_settings()
-IDENT_PROPERTY: str = settings.age.ident_property
+IDENT_PROPERTY: str = get_settings().age.ident_property
 
 if TYPE_CHECKING:
     from pgmcp.ag_graph import AgGraph

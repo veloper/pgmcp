@@ -26,9 +26,6 @@ if TYPE_CHECKING:
     from pgmcp.models.base_query_builder import QueryBuilder
 
 
-_settings = get_settings()
-
-
 # Sentinel ContextVar for session and ownership
 _async_session_ctx: ContextVar[AsyncSession | None] = ContextVar("_async_session_ctx", default=None)
 _async_session_owner_ctx: ContextVar[bool] = ContextVar("_async_session_owner_ctx", default=False)
@@ -349,7 +346,7 @@ class Base(DeclarativeBase, RailsQueryInterfaceMixin):
         Context manager that yields the context-local AsyncSession.
         Ensures the same session is reused within the same async context.
         """
-        session = await _settings.db.get_primary().sqlalchemy_async_session()
+        session = await get_settings().db.get_primary().sqlalchemy_async_session()
         yield session
 
     # @classmethod

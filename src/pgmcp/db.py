@@ -13,8 +13,7 @@ from sqlalchemy.orm import declarative_base
 from pgmcp.settings import get_settings
 
 
-settings = get_settings()
-IDENT_PROPERTY = settings.age.ident_property
+IDENT_PROPERTY = get_settings().age.ident_property
 
 Base = declarative_base()
 

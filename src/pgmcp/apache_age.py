@@ -11,8 +11,7 @@ from pgmcp.db import AgtypeRecord
 from pgmcp.settings import get_settings
 
 
-settings = get_settings()
-dbs = settings.db.get_primary()
+dbs = get_settings().db.get_primary()
 
 class ApacheAGE:
     """An apache age repository for interacting with the apache age graph database."""

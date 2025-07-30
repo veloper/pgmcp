@@ -9,11 +9,9 @@ from pgmcp.settings import get_settings
 from pgmcp.utils import deep_merge
 
 
-settings = get_settings()
-
-IDENT_PROPERTY: str = settings.age.ident_property
-START_IDENT_PROPERTY: str = settings.age.start_ident_property
-END_IDENT_PROPERTY: str = settings.age.end_ident_property
+IDENT_PROPERTY: str = get_settings().age.ident_property
+START_IDENT_PROPERTY: str = get_settings().age.start_ident_property
+END_IDENT_PROPERTY: str = get_settings().age.end_ident_property
 
 if TYPE_CHECKING:
     from pgmcp.ag_graph import AgGraph
@@ -121,7 +119,7 @@ class AgEdge(AgEntity):
     def upsert(self, *, label: str | None = None, properties: dict | None = None) -> Self:
         """Upsert this edge using a non-destructive deep-merge.
         
-        - Protects critical properties like ident, start_ident, and end_ident.
+        - Protects critical properties like ident, start_ident, and endIdent.
         - Merges in the most non-destructive way possible.
         - If label is provided, it will update the edge's label.
         """

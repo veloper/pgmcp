@@ -10,10 +10,6 @@ from pgmcp.server_psql import mcp as psql_mcp
 from pgmcp.settings import get_settings
 
 
-settings = get_settings()
-db = settings.db
-
-
 # Define Server
 mcp = FastMCP(name="pgmcp")
 

@@ -14,8 +14,6 @@ from sqlalchemy.sql.elements import NamedColumn
 from pgmcp.settings import get_settings
 
 
-settings = get_settings()
-
 session_ctx: ContextVar[Session | None] = ContextVar("session_ctx", default=None)
 session_owner_ctx: ContextVar[bool] = ContextVar("session_owner_ctx", default=False)
 
@@ -299,7 +297,7 @@ class Base(ScrapyBase):
         Context manager that yields a context-local Session.
         Ensures the same session is reused within the same sync context.
         """
-        session = settings.db.get_primary_sync().sync_session()
+        session = get_settings().db.get_primary_sync().sync_session()
         try:
             yield session
         finally:

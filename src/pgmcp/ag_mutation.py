@@ -8,8 +8,6 @@ from typing import Any, Dict, List, Literal
 from pgmcp.settings import get_settings
 
 
-settings = get_settings()
-
 """
 REQUIRED_PROPERTY_KEYS 
 These are the property keys that uniquely identify vertices and edges in both AGE and Ag* class systems.
@@ -18,11 +16,11 @@ These are the property keys that uniquely identify vertices and edges in both AG
 - They are used to ensure that mutations can be applied correctly, especially when converting between different graph representations."""
 
 REQUIRED_PROPERTY_KEYS = [
-    settings.age.ident_property,
-    settings.age.start_ident_property,
-    settings.age.end_ident_property
+    get_settings().age.ident_property,
+    get_settings().age.start_ident_property,
+    get_settings().age.end_ident_property
 ]
-REQUIRED_VERTEX_PROPERTY_KEYS = [ settings.age.ident_property ]
+REQUIRED_VERTEX_PROPERTY_KEYS = [ get_settings().age.ident_property ]
 REQUIRED_EDGE_PROPERTY_KEYS = REQUIRED_PROPERTY_KEYS
 
 @dataclass
@@ -397,10 +395,10 @@ class UpsertEdgeCypherStatement(BaseCypherStatement):
         
         clauses = []
         start_label = self.encode_keyword(self.start_label) if self.start_label else ""
-        start_keyword = self.encode_keyword(settings.age.ident_property)
+        start_keyword = self.encode_keyword(get_settings().age.ident_property)
 
         end_label = self.encode_keyword(self.end_label) if self.end_label else ""
-        end_keyword = self.encode_keyword(settings.age.ident_property)
+        end_keyword = self.encode_keyword(get_settings().age.ident_property)
         
         start_ident = self.quote_string(str(self.start_ident))
         end_ident = self.quote_string(str(self.end_ident))
@@ -432,8 +430,8 @@ class DeleteEdgeCypherStatement(BaseCypherStatement):
         clauses = []
 
         label = self.encode_keyword(self.label)
-        start_keyword = self.encode_keyword("start_id" if self.start else settings.age.start_ident_property)
-        end_keyword = self.encode_keyword("end_id" if self.end else settings.age.end_ident_property)
+        start_keyword = self.encode_keyword("start_id" if self.start else get_settings().age.start_ident_property)
+        end_keyword = self.encode_keyword("end_id" if self.end else get_settings().age.end_ident_property)
         start_value = int(self.start) if self.start else self.quote_string(str(self.start_ident))
         end_value = int(self.end) if self.end else self.quote_string(str(self.end_ident))
 

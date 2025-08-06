@@ -7,9 +7,7 @@ from blinker import Namespace
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from typing_extensions import Self
 
-from pgmcp.markdown_document import MdDocument
 from pgmcp.models import Corpus, CrawlItem, CrawlJob, Document, Library
-from pgmcp.utils import convert_markdown_to_markdown_document
 
 
 # async with CrawlItem.async_context() as async_session:
@@ -133,25 +131,6 @@ class CreateDocumentJob(BaseModel):
         raise NotImplementedError("Subclasses must implement this method to convert content into a Document.")
     
 
-class CreateDocumentFromMdDocumentJob(CreateDocumentJob):
-    
-    md_document: MdDocument = Field(..., description="The markdown document to be processed and saved.")
-
-    def get_title(self) -> str:
-        """Extracts the title from the markdown document."""
-        return self.md_document.title or ""
-
-    # def get_document(self) -> Document:
-        # """Convert the markdown document into a Document instance."""
-        # return convert_markdown_document_to_markdown_document
-
-    def from_markdown(cls, markdown: str, *, title: str | None, corpus_id: int | None) -> Self:
-        """Create a job from a markdown string."""
-        md_document = convert_markdown_to_markdown_document(markdown, title=title)
-        return cls.model_validate({
-            "md_document": md_document,
-            "corpus_id": corpus_id,
-        })
 
 class IngestionConfig(BaseModel):
     """A class to configure, orchestrate, and manage the ingestion of crawl jobs into the knowledge base library."""

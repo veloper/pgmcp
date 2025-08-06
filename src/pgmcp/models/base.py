@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import datetime
 
+from collections import UserList
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, Generator, List, Optional, Self, Type, Union
+from typing import (TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, Generator, List, Optional, Self, Type, TypeVar,
+                    Union)
 
 from blinker import Namespace
 from sqlalchemy import DateTime, and_, func, schema, select
@@ -13,11 +15,10 @@ from sqlalchemy.orm import (DeclarativeBase, InstrumentedAttribute, Mapped, Sess
                             sessionmaker)
 from sqlalchemy.sql.elements import NamedColumn
 from sqlalchemy.sql.selectable import Select
-from sqlalchemy_declarative_extensions import Function, declarative_database
 from typing_extensions import Literal
 
 from pgmcp.database_connection_settings import DatabaseConnectionSettings
-from pgmcp.models.base_functions import functions
+# from pgmcp.models.base_functions import functions  # TODO: Fix this import
 from pgmcp.models.mixin import RailsQueryInterfaceMixin
 from pgmcp.settings import get_settings
 
@@ -29,10 +30,6 @@ if TYPE_CHECKING:
 # Sentinel ContextVar for session and ownership
 _async_session_ctx: ContextVar[AsyncSession | None] = ContextVar("_async_session_ctx", default=None)
 _async_session_owner_ctx: ContextVar[bool] = ContextVar("_async_session_owner_ctx", default=False)
-
-_session_ctx: ContextVar[Session | None] = ContextVar("_session_ctx", default=None)
-_session_owner_ctx: ContextVar[bool] = ContextVar("_session_owner_ctx", default=False)
-
 
 # ================================================================
 # Events / Signals
@@ -157,17 +154,11 @@ def send_signal_pair(signal_name: str, sender: Base) -> Generator[None, None, No
     finally:
         signal_after.send(sender)
     
-# ================================================================
-# Functions
-# ================================================================
-
-
 
 # ================================================================
 # Base Model Class
 # ================================================================    
 
-@declarative_database
 class Base(DeclarativeBase, RailsQueryInterfaceMixin):
     """Base class for all models in the application."""
     __abstract__ = True
@@ -177,11 +168,16 @@ class Base(DeclarativeBase, RailsQueryInterfaceMixin):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     created_at: Mapped[datetime.datetime] = mapped_column( DateTime(timezone=True), nullable=False, server_default=func.now() )
     updated_at: Mapped[datetime.datetime] = mapped_column( DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now() )
+  
+    # == Relationships Helpers =========================================================
     
-    # == Functions ===================================================================
-    
-    functions = functions
-   
+    async def ensure_loaded(self, *relationships: str) -> Self:
+        """Load relationships in place, modifying the current instance."""
+        if relationships:
+            async with self.async_context() as session:
+                await session.refresh(self, attribute_names=relationships)
+        return self
+  
     # == Hooks ========================================================================
     
     async def _before_save(self): pass
@@ -252,7 +248,7 @@ class Base(DeclarativeBase, RailsQueryInterfaceMixin):
             
         """
         
-        async with self.async_session() as session:    
+        async with self.async_context() as session:    
             async with send_async_signal_pair("save", self):
                 async with send_async_signal_pair(("insert" if self.is_new else "update"), self):
                     session.add(self)
@@ -263,7 +259,7 @@ class Base(DeclarativeBase, RailsQueryInterfaceMixin):
     
     async def destroy(self):
         """Delete this model instance from the database."""
-        async with self.async_session() as session:
+        async with self.async_context() as session:
             async with send_async_signal_pair("destroy", self):
                 await session.delete(self)
                 await self.commit() # leave expired so the instance is not in the session anymore
@@ -271,24 +267,49 @@ class Base(DeclarativeBase, RailsQueryInterfaceMixin):
 
     async def commit(self):
         """Commit the current session."""
-        async with self.async_session() as session:
+        async with self.async_context() as session:
             async with send_async_signal_pair("commit", self):
                 await session.commit()
 
     async def refresh(self): 
         """Refresh the model instance from the database."""
-        async with self.async_session() as session:
+        async with self.async_context() as session:
             async with send_async_signal_pair("refresh", self):
+                # Check if `self` is not in the session, and if that is the case, add it before refreshing
+                if self not in session:
+                    session.add(self)
                 await session.refresh(self)
 
     async def flush(self): 
         """Flush the current session."""
-        async with self.async_session() as session:
+        async with self.async_context() as session:
             async with send_async_signal_pair("flush", self):
                 await session.flush()
 
     # == ASYNC Session Management Methods =========================================================
+    @classmethod
+    async def open_async_session(cls) -> AsyncSession:
+        """
+        Explicitly open and set the async session context for notebook use _only_
+        """
+        session = _async_session_ctx.get()
+        if session is None:
+            session = await get_settings().db.get_primary().sqlalchemy_async_session()
+            _async_session_ctx.set(session)
+            _async_session_owner_ctx.set(True)
+        return session
 
+    @classmethod
+    async def close_async_session(cls):
+        """
+        Explicitly close and clean up the async session context for notebook use _only_.
+        """
+        session = _async_session_ctx.get()
+        is_owner = _async_session_owner_ctx.get()
+        if session and is_owner:
+            await session.close()
+            _async_session_ctx.set(None)
+            _async_session_owner_ctx.set(False)
 
 
     @classmethod
@@ -297,7 +318,6 @@ class Base(DeclarativeBase, RailsQueryInterfaceMixin):
         """Context manager that is the high level unit of operational work spanning multiple AR operations.
         
         This has an explicit close call that release the session back to the pool.
-        
         
         Model usage requires this to be performed at a high level within the application's request/response cycle.
         
@@ -323,7 +343,7 @@ class Base(DeclarativeBase, RailsQueryInterfaceMixin):
         session = _async_session_ctx.get()
         is_owner = False
         if session is None:
-            async with cls.async_session() as session:
+            async with cls._async_session() as session:
                 token = _async_session_ctx.set(session)
                 owner_token = _async_session_owner_ctx.set(True)
                 is_owner = True
@@ -333,15 +353,15 @@ class Base(DeclarativeBase, RailsQueryInterfaceMixin):
                     if is_owner:
                         _async_session_ctx.reset(token)
                         _async_session_owner_ctx.reset(owner_token)
-                # Close the session if we are the owner
-                await session.close()
+                        # Close the session if we are the owner
+                        await session.close()
         else:
             # Nesting within an existing session, just yield but dont close it
             yield session
 
     @classmethod
     @asynccontextmanager
-    async def async_session(cls) -> AsyncGenerator[AsyncSession, None]:
+    async def _async_session(cls) -> AsyncGenerator[AsyncSession, None]:
         """
         Context manager that yields the context-local AsyncSession.
         Ensures the same session is reused within the same async context.
@@ -363,7 +383,7 @@ class Base(DeclarativeBase, RailsQueryInterfaceMixin):
         Yields:
             AsyncSession with an active transaction (committed or rolled back on exit).
         """
-        async with cls.async_session() as session:
+        async with cls.async_context() as session:
             async with session.begin_nested():
                 yield session
 
@@ -382,7 +402,7 @@ class Base(DeclarativeBase, RailsQueryInterfaceMixin):
     @classmethod
     async def find(cls: type[Self], id: int) -> Self | None:
         """Fetch a record by its primary key (if it's `id`)."""
-        async with cls.async_session() as session:
+        async with cls.async_context() as session:
             result = await session.execute(select(cls).where(cls.id == id))
             return result.scalar_one_or_none()
 

@@ -54,7 +54,7 @@ async def select(
     """Execute a SQL query against the primary PostgreSQL database and return a List[Dict[str, Any]] of rows."""
     
     async with dbs.sqlalchemy_transaction() as conn:
-        if not query.strip().lower().startswith("select"):
+        if not query.strip().lower().startswith(("select", "with")):
             raise ValueError("Only SELECT queries are allowed in this tool.")
         return await dbs.fetch(query, params)
 

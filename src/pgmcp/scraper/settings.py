@@ -24,7 +24,7 @@ class Settings(BaseModel):
     FTP_PASSWORD                   : str            = Field(default="guest",                                   description="FTP password if not set in Request meta.")
     FTP_USER                       : str            = Field(default="anonymous",                               description="FTP username if not set in Request meta.")
     ITEM_PIPELINES                 : Dict[str, int] = Field(default_factory=lambda: {
-        "pgmcp.scrapy.pipeline.Pipeline": 100,
+        "pgmcp.scraper.pipeline.Pipeline": 100,
     }, description="Item pipelines and their orders.")
     ITEM_PIPELINES_BASE            : Dict[str, int] = Field(default_factory=dict,                              description="Base item pipelines enabled by default in Scrapy.")
     JOBDIR                         : str | None     = Field(default=None,                                      description="Directory for storing crawl state for pausing/resuming.")
@@ -433,11 +433,11 @@ class CustomSettings(Settings):
     DEPTH_LIMIT                    : int   = Field(default=3, description="Limit the depth of the crawl")
 
     EXTENSIONS : Dict[str, int | None] = Field(default_factory=lambda: {
-        'pgmcp.scrapy.job_state_ext.JobStateExt': 400,
-        'pgmcp.scrapy.job_periodic_status_ext.JobPeriodicStatusExt': 500,
+        'pgmcp.scraper.job_state_ext.JobStateExt': 400,
+        'pgmcp.scraper.job_periodic_status_ext.JobPeriodicStatusExt': 500,
     })
 
     ITEM_PIPELINES : Dict[str, int] = Field(default_factory=lambda: {
-        'pgmcp.scrapy.pipeline.Pipeline': 300
+        'pgmcp.scraper.pipeline.Pipeline': 300
     })
 

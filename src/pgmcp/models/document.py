@@ -2,136 +2,107 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Self, Union
 
-from sqlalchemy import ForeignKey
+from bs4 import BeautifulSoup
+from sqlalchemy import ForeignKey, LargeBinary
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from pgmcp.markdown_document import (MdCodeBlock, MdDocument, MdListing, MdParagraph, MdSection, MdSentence, MdTable,
-                                     MdTableRow, MdTableRowCell)
+from pgmcp.chunking.document import Document as ChunkingDocument
 from pgmcp.models.base import Base
-from pgmcp.models.base_query_builder import QueryBuilder
-from pgmcp.models.mixin import IsContentableMixin
 
-
-MdTypes = Union[
-    MdDocument,
-    MdSection,
-    MdParagraph,
-    MdListing,
-    MdTable,
-    MdCodeBlock,
-    MdSentence,
-    MdListing,
-    MdTableRow,
-    MdTableRowCell,
-]
 
 if TYPE_CHECKING:
+    from pgmcp.models.chunk import Chunk
     from pgmcp.models.corpus import Corpus
-    from pgmcp.models.element import Element
-    from pgmcp.models.section import Section
 
 
-class Document(IsContentableMixin, Base):
+class Document(Base):
+    """Represents a document in a corpus.
+
+    Supports Markdown, HTML, and binary formats (e.g., PDF, Word). Documents are chunked for 
+    processing and linked to a corpus.
+    """
+    
     # == Model Metadata =======================================================
     __tablename__ = "documents"
 
     # == Columns ============================================================== 
-    corpus_id: Mapped[int] = mapped_column(ForeignKey("corpora.id"), nullable=False)
-    title: Mapped[str | None] = mapped_column(nullable=True)
-    
+    corpus_id    : Mapped[int]          = mapped_column(ForeignKey("corpora.id"), nullable=False)
+    title        : Mapped[str | None]   = mapped_column(nullable=True)
+    content      : Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, doc="Original binary content of the document, if applicable")
+    content_type : Mapped[str | None]   = mapped_column(nullable=True, default="text/plain", doc="MIME type of the original content, if applicable")
+
     # == Relationships ========================================================
+    
     corpus: Mapped[Corpus] = relationship("Corpus", back_populates="documents")
+    chunks: Mapped[list["Chunk"]] = relationship("Chunk", back_populates="document")
 
     
-    body: Mapped["Element | None"] = relationship(
-        "Element",
-        primaryjoin="and_(Element.type == 'body', foreign(Element.document_id) == Document.id)",
-        uselist=False,
-        lazy="joined",
-        back_populates="document"
-    )
+    
+    # == Hooks ============================================================
+    
+    async def before_save(self) -> Self:
+        """Ensure the document has a title if it is not set."""
+        pass
+        # if not self.title:
+        #     self.title = "Untitled Document"
+        #     # try to extract a title from the first section if available
+        #     if self.body and isinstance(self.body, Element) and self.body.type == "body":
+        #         first_section: Section | None = self.body.children[0] if self.body.children else None
+        #         if first_section and first_section.type == "section" and first_section.attributes.get("title"):
+        #             self.title = first_section.attributes["title"]
+        # return self
+    
+    async def after_save(self) -> Self:
+        """Rebuild the element tree after saving the document."""
+        pass
+        # from pgmcp.models.element import Element
+        # async with Element.async_context() as session:
+        #     body = await Element.query().where(document_id=self.id, type="body").first()
+        #     if body:
+        #         await body.rebuild_tree()
+            
+        # return self
 
     # == Methods ==============================================================
     
-    @classmethod
-    def query_eager_loaded(cls, depth: int = 20) -> QueryBuilder["Document"]:
-        children = [Element.children] * depth        
-        return Document.query().eager_load_chain( Document.body, *children )
+    
     
     @classmethod
     async def from_markdown(cls, markdown: str, *, corpus_id: int | None = None, title: str | None = None) -> Document:
-        from pgmcp.utils import convert_markdown_to_markdown_document
-        md_document = convert_markdown_to_markdown_document(markdown)
-        return await cls.from_markdown_document(md_document, corpus_id=corpus_id, title=title)
+        chunking_document = ChunkingDocument.from_markdown(markdown)
+        return await cls.from_chunking_document(chunking_document, corpus_id=corpus_id, title=title)
 
     @classmethod
     async def from_html(cls, html: str, *, corpus_id: int | None = None, title: str | None = None) -> Document:
-        from pgmcp.utils import convert_html_to_markdown_document
-        md_document = convert_html_to_markdown_document(html)
-        return await cls.from_markdown_document(md_document, corpus_id=corpus_id, title=title)
-
-
+        document = ChunkingDocument.from_html(html)
+        return await cls.from_chunking_document(document, corpus_id=corpus_id, title=title)
+        
     @classmethod
-    async def from_markdown_document(cls, md_document: MdDocument, *, corpus_id: int | None = None, title: str | None = None) -> 'Document':
+    async def from_chunking_document(cls, chunking_document: ChunkingDocument, *, corpus_id: int | None = None, title: str | None = None) -> Document:
         """
         Build a Document ORM object tree from an MdDocument, in memory only (no DB/session logic).
         Returns a fully-linked Document object graph.
         """
-        from pgmcp.models.element import Element
-
+        from pgmcp.models.chunk import Chunk
         
-
-        def add_element(md_element: MdTypes, parent: Element | None, doc : Document | None = None) -> Element | None:
-            if isinstance(md_element, MdDocument):
-                element = Element(type="body", content=md_element.text, document=doc)
-                if sections := md_element.sections:
-                    for md_section in sections:
-                        add_element(md_section, parent=element)
-                return element # the only element that can be returned as body
-            elif isinstance(md_element, MdSection):
-                element = Element(type="section", parent=parent, content=md_element.text, attributes={"title": md_element.title})
-                if section_items := md_element.section_items:
-                    for md_section_item in section_items:
-                        add_element(md_section_item, parent=element)
-            elif isinstance(md_element, MdParagraph):
-                element = Element(type="paragraph", parent=parent, content=md_element.text)
-                if sentences := md_element.sentences:
-                    for md_sentence in sentences:
-                        add_element(md_sentence, parent=element)
-            elif isinstance(md_element, MdSentence):
-                element = Element(type="sentence", parent=parent, content=md_element.text)
-            elif isinstance(md_element, MdListing):
-                element = Element(type="listing", parent=parent, content=md_element.text)
-                if listing_items := md_element.listing_items:
-                    for md_listing_item in listing_items:
-                        add_element(md_listing_item, parent=element)
-            elif isinstance(md_element, MdTable):
-                element = Element(type="table", parent=parent, content=md_element.text)
-                for md_table_row in md_element.table_rows:
-                    add_element(md_table_row, parent=element)
-            elif isinstance(md_element, MdTableRow):
-                element = Element(type="table_row", parent=parent, content=md_element.text)
-                for md_table_row_cell in md_element.cells:
-                    add_element(md_table_row_cell, parent=element)
-            elif isinstance(md_element, MdTableRowCell):
-                element = Element(type="table_row_cell", parent=parent, content=md_element.text)
-            elif isinstance(md_element, MdCodeBlock):
-                element = Element(type="code_block", parent=parent, content=md_element.text,attributes={ "delimiter": md_element.delimiter, "language_id": md_element.language_id })
-            else:
-                raise ValueError(f"Unsupported markdown element type: {type(md_element)}")
-            return None
         
-
         attrs = {}
-        attrs['title'] = md_document.title or title or None
+        attrs['title'] = title or chunking_document.title
         if corpus_id is not None:
             attrs['corpus_id'] = corpus_id
-        # Set contentable_type for IsContentableMixin
+        
         doc = cls(**attrs)
         
-        doc.body = add_element(md_document, parent=None, doc=doc)
-
+        # Create the chunks and link them to the document
+        for chunk in chunking_document.chunks:
+            await Chunk.from_chunking_chunk(doc, chunk)
+        
         return doc
+        
+        
+        
+
+    #     return doc
 
 
 

@@ -57,6 +57,12 @@ dependencies = [
     "unstructured[md]>=0.18.5",
     "scrapy-fake-useragent>=1.4.4",
     "psycopg2>=2.9.10",
+    "jupyter>=1.1.1",
+    "lxml>=5.4.0",
+    "goose3>=3.1.19",
+    "justext>=3.0.2",
+    "newspaper3k>=0.2.8",
+    "openai>=1.98.0",
 ]
 
 [project.scripts]

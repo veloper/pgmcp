@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Self  # Added Dict, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Self, Tuple  # Added Dict, Tuple
 from urllib.parse import urlparse
 
 from sqlalchemy import Enum as SQLEnum
@@ -100,7 +101,142 @@ class CrawlJob(Base):
 
     # == Methods ==============================================================
     
+    # get start urls, group by hostname, pick most common, or first if no common, return hostname + path.replace("/", " ")
+    def get_name_from_most_common_domain(self) -> str:
+        """Get the name of the job based on the most common domain in start_urls.
+        
+        Example:
+            example.com/some/path -> example.com: some path
+            example.com -> example.com
+        """
+        if not self.start_urls:
+            return "Unnamed Job"
+        
+        domain_to_urls: Dict[str, List[str]] = {}
+        for url in self.start_urls:
+            domain = urlparse(url).netloc
+            path = urlparse(url).path.replace("/", " ")
+            domain_to_urls.setdefault(domain, []).append(path)
+
+        # Pick the most common domain or the first one if there's a tie
+        most_common_domain = max(domain_to_urls, key=lambda k: (len(domain_to_urls[k]), k))
+        paths = domain_to_urls[most_common_domain]
+        return f"{most_common_domain}: {paths[0]}" if paths else most_common_domain
+
+    @property
+    def stats_message_line(self) -> str:
+        """Get a message line summarizing the stats"""
+        human_minutes = int(self.stats_elapsed_seconds // 60)
+        human_seconds = int(self.stats_elapsed_seconds % 60)
+        
+        line = [
+            f"⚡️ {self.stats_items_per_minute:.2f}/m",
+            f"🟢 {self.stats_response_status_count_2xx + self.stats_response_status_count_3xx}",
+            f"🔴 {self.stats_response_status_count_4xx + self.stats_response_status_count_5xx}",
+            f"🗑 {self.stats_filtered_count}",
+            f"⏳ {human_minutes:02}:{human_seconds:02}",
+        ]
+        
+        return " ".join(line)
+        
+    def sum_responses_starting_with(self, prefix: str) -> int:
+        """Sum the counts of responses starting with a given prefix."""
+        if not isinstance(self.stats, dict):
+            return 0
+        
+        return sum(
+            int(value) for key, value in self.stats.get("stats", {}).items()
+            if key.startswith(prefix) and isinstance(value, (int, float))
+        )
     
+    # downloader/response_status_count/200
+    @property
+    def stats_response_status_count_2xx(self) -> int: return self.sum_responses_starting_with("downloader/response_status_count/2")
+    
+    @property
+    def stats_response_status_count_3xx(self) -> int: return self.sum_responses_starting_with("downloader/response_status_count/3")
+    
+    @property
+    def stats_response_status_count_4xx(self) -> int: return self.sum_responses_starting_with("downloader/response_status_count/4")
+    
+    @property
+    def stats_response_status_count_5xx(self) -> int: return self.sum_responses_starting_with("downloader/response_status_count/5")
+
+    @property
+    def stats_filtered_count(self) -> int:
+        """Get the number of requests filtered by the dupefilter."""
+        if (stats := self.stats.get("stats")) and isinstance(stats, dict):
+            if stats.get("dupefilter/filtered") is not None:
+                return int(stats["dupefilter/filtered"])
+        return 0
+    
+    @property
+    def stats_scheduler_dequeued_count(self) -> int:
+        """Get the number of items dequeued by the scheduler."""
+        if (stats := self.stats.get("stats")) and isinstance(stats, dict):
+            if stats.get("scheduler/dequeued") is not None:
+                return int(stats["scheduler/dequeued"])
+        return 0
+    
+    @property
+    def stats_scheduler_enqueued_count(self) -> int:
+        """Get the number of items enqueued by the scheduler."""
+        if (stats := self.stats.get("stats")) and isinstance(stats, dict):
+            if stats.get("scheduler/enqueued") is not None:
+                return int(stats["scheduler/enqueued"])
+        return 0
+    
+    
+    @property
+    def stats_progress_and_total_and_ratio(self) -> Tuple[int, int, float]:
+        """Get the progress and total number of requests."""
+        total = self.stats_scheduler_dequeued_count + self.stats_scheduler_enqueued_count
+        progress = self.stats_scheduler_dequeued_count
+        if total > 0:
+            return progress, total, progress / total
+        return progress, total, 0.0 
+    
+     
+    @property
+    def stats_items_per_minute(self) -> float:
+        """Calculate the number of items processed per minute."""
+        return self.stats_items_per_second * 60.0
+     
+    @property
+    def stats_items_per_second(self) -> float:
+        """Calculate the number of items processed per second."""
+        elapsed_seconds = self.stats_elapsed_seconds
+        dequeued_count = self.stats_scheduler_dequeued_count
+        return dequeued_count / (elapsed_seconds if elapsed_seconds > 0 else 0.0)
+        
+    @property
+    def stats_elapsed_seconds(self) -> float:
+        if (time_stats := self.stats.get("time")) and isinstance(time_stats, dict):
+            if time_stats.get("elapsed") is not None:
+                return float(time_stats["elapsed"])
+        return 0
+
+    # == Testing Methods ==================================================
+    @property
+    def is_idle(self) -> bool: return self.status == CrawlJobStatus.IDLE
+    @property
+    def is_ready(self) -> bool: return self.status == CrawlJobStatus.READY
+    @property
+    def is_running(self) -> bool: return self.status == CrawlJobStatus.RUNNING
+    @property      
+    def is_paused(self) -> bool: return self.status == CrawlJobStatus.PAUSED
+    @property
+    def is_failed(self) -> bool: return self.status == CrawlJobStatus.FAILED
+    @property
+    def is_cancelled(self) -> bool: return self.status == CrawlJobStatus.CANCELLED
+    @property
+    def is_succeeded(self) -> bool: return self.status == CrawlJobStatus.SUCCEEDED
+    
+    @property
+    def is_done(self) -> bool:
+        """Check if the job is in a terminal state (succeeded, failed, or cancelled)."""
+        return self.is_succeeded or self.is_failed or self.is_cancelled
+        
     # == Transition Methods ==================================================
     
     async def transition_to(self, new_status: CrawlJobStatus) -> None:

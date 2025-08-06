@@ -45,14 +45,14 @@ class Job(BaseModel):
         """
         root_path         : Path = get_settings().app.root_path
         pkg_path          : Path = get_settings().app.package_path.resolve()
-        executable_path   : Path = pkg_path / "scrapy" / "cli.py"
+        executable_path   : Path = pkg_path / "scraper" / "cli.py"
         working_dir_path  : Path = root_path
         
         python_executable : Path = root_path / ".venv" / "bin" / "python"
 
         
         if not executable_path.exists():
-            raise FileNotFoundError(f"Scrapy executable not found at {executable_path}")
+            raise FileNotFoundError(f"Scraper executable not found at {executable_path}")
         cmd = [str(python_executable), str(executable_path), "run", str(self.id)]
         
         if background:

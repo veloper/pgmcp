@@ -1,68 +1,84 @@
-from __future__ import annotations
+# from __future__ import annotations
 
-import json, re
+import datetime
 
-from dataclasses import dataclass
 from textwrap import dedent
-from typing import Annotated, Any, Dict, List, Literal, Self, Tuple, cast
+from typing import Annotated, Any, Awaitable, Callable, Dict, NamedTuple
 
 # Signals
-from fastmcp import Client, Context, FastMCP
-from fastmcp.client.sampling import SamplingMessage
-from fastmcp.prompts.prompt import Message
-from mcp.types import PromptMessage, TextContent, ToolAnnotations
+from fastmcp import Context, FastMCP
 from pydantic import Field
-from sqlalchemy import func
+from sqlalchemy import Tuple
 
-from pgmcp.markdown_document import MdDocument
+from pgmcp.async_worker_pool import AsyncWorkerPoolBase
+from pgmcp.chunking.document import Document as ChunkDocument
+from pgmcp.models.chunk import Chunk
 from pgmcp.models.corpus import Corpus
 from pgmcp.models.crawl_item import CrawlItem
 from pgmcp.models.crawl_job import CrawlJob
 from pgmcp.models.document import Document
 from pgmcp.models.library import Library
-from pgmcp.models.section import Section
-from pgmcp.models.section_item import SectionItem
-from pgmcp.settings import get_settings
-from pgmcp.utils import convert_sample_message_from_prompt_message
+from pgmcp.payload import Payload
 
+
+KNOWLEDGE_BASE_LIBRARY_NAME = "Knowledge Base"
+_kb_library: Library | None = None
+async def get_knowledge_base_library() -> Library:
+    """Get or create the knowledge base library."""
+    
+    global _kb_library
+    if not _kb_library:
+        async with Library.async_context():
+            _kb_library = await Library.query().where(Library.name == KNOWLEDGE_BASE_LIBRARY_NAME).first()
+            if not _kb_library:
+                _kb_library = Library(name=KNOWLEDGE_BASE_LIBRARY_NAME)
+                await _kb_library.save()
+    return _kb_library
+
+_named_corpus_cache: Dict[str, Corpus] = {}
+async def get_corpus_by_name_or_create(name: str) -> Corpus:
+    """Get or create a corpus by name."""
+    global _named_corpus_cache
+    async with Corpus.async_context():
+        if name in _named_corpus_cache:
+            return _named_corpus_cache[name]
+        library = await get_knowledge_base_library()
+        corpus = await Corpus.query().where(Corpus.name == name, Corpus.library_id == library.id).first()
+        if not corpus:
+            corpus = Corpus(name=name, library_id=library.id)
+            await corpus.save()
+        _named_corpus_cache[name] = corpus
+        return corpus
+    raise ValueError(f"Failed to get or create corpus with name: {name}")
 
 OVERVIEW = """
-    This MCP Server toolset provides a set of tools for managing a knowledge base (KB) system.
+    # Knowledge Base Service Overview
 
     ## Data Model Overview:
-    
-            
-    - `Content`: 
-        - **Desc:** Represents the content of a document, which can be text, code, or whatever depending on the source.
-        - **Important to note:** The content is always the full content of whatever element it is associated with (e.g., a table would have the full table, rows and cells, not just the outer structure).
-    
 
     ### Hierarchical Structure:
-    - `Library`
-        - corpora: List[Corpus]
-            - `Corpus`
-                - documents: List[Document]
-                    - `Document`
-                        - metadata: Dict[str, Any]
-                        - body: Element
-                            - `Element`
-                                - type: str (body, section, paragraph, sentence, listing, table, table_row, table_row_cell, code_block)
-                                - content: Content (e.g., text, code, etc.)
-                                - embedding : Optional[Embedding] (if applicable)
-                                - attributes: Dict[str, Any] (e.g., title for sections)
-                                - left: int (for tree structure)
-                                - right: int (for tree structure)
-                                - level: int (for tree structure)
-                                - position: int (for tree structure)
-                                - children: List[Element] (recursive structure)
-                                - parent: Element | None (for tree structure)
-                                - document: Document (back-reference to the document only on body elements)
-    
+    - corpora: List[Corpus]
+        - `Corpus`
+            - documents: List[Document]
+                - `Document`
+                    - metadata: Dict[str, Any]
+                    - body: Element
+                        - `Element`
+                            - type: str (body, section, paragraph, sentence, listing, table, table_row, table_row_cell, code_block)
+                            - content: Content (e.g., text, code, etc.)
+                            - embedding : Optional[Embedding] (if applicable)
+                            - attributes: Dict[str, Any] (e.g., title for sections)
+                            - left: int (for tree structure)
+                            - right: int (for tree structure)
+                            - level: int (for tree structure)
+                            - position: int (for tree structure)
+                            - children: List[Element] (recursive structure)
+                            - parent: Element | None (for tree structure)
+                            - document: Document (back-reference to the document only on body elements)
+
                     
     ## Usage
-    This toolset provides a set of tools for ingesting, and recalling from the knowledge base.
-    
-    All tools follow a datamodel naming convention that is consistent with the above structures and akin to RESTful API design.
+    This toolset works hand in hand with the crawl_* jobs to handle the ingestion, curation, and management of technical documentation pages into a knowledge base.
     
     We're under the knowledge base library, thus leaving control over the corpus, and documents of that knowledge base.
     
@@ -78,7 +94,7 @@ OVERVIEW = """
 # Global Prompts
 # =====================================================
 
-PROMPT_CURATE_CRAWL_ITEMS = dedent(f"""
+PROMPT_CURATE_CRAWL_ITEMS = dedent("""
     # IDENTITY AND PURPOSE
     You are a world-class technical documentation curator specializing in selecting the most relevant and high-quality technical documentation pages from a list of web page metadata. 
 
@@ -165,194 +181,145 @@ mcp = FastMCP(name="Knowledge Base Service", instructions=OVERVIEW)
 # =====================================================
 # =====================================================
 
-@mcp.tool
-async def find_corpus(ctx: Context, corpus_name: str) -> List[Corpus]:
-    """Find a corpus_id by its name."""
+@mcp.tool(tags={"corpora", "list", "data", "start"})
+async def list_corpora(
+    per_page : Annotated[int, Field(description="Number of corpora per page", ge=1, lt=100)] = 15, 
+    page     : Annotated[int, Field(description="Page number to retrieve", ge=1)] = 1,
+    sort     : Annotated[str, Field(description="Attribute to sort corpora by", pattern=r"^(id|created_at|updated_at|name)$")] = "id", 
+    order    : Annotated[str, Field(description="Sort order: asc or desc", pattern=r"^(asc|desc)$")] = "desc"
+) -> Dict[str, Any]:
+    """List all corpora."""
     async with Corpus.async_context():
-        results = await Corpus.query().where("name ILIKE :name", name=corpus_name).all()
-    return results  
+        if sort not in ["id", "created_at", "updated_at", "name"]: raise ValueError(f"Invalid sort attribute: {sort}")
+        if order not in ["asc", "desc"]: raise ValueError(f"Invalid sort order: {order}")
+        payload = Payload()
 
-
-
-
-
-async def _curate_crawl_job_items(ctx: Context, crawl_job_id: int) -> List[PromptMessage]:
-    """Prompt the AI to curate a list of CrawlItems to ensure only relevant and topical items are returned as a comma-separated list."""
-    prompt = PROMPT_CURATE_CRAWL_ITEMS
-
-    metadata = {}
-    
-    async with CrawlJob.async_context():
-        crawl_job = await CrawlJob.find(crawl_job_id)
-        if not crawl_job:
-            raise ValueError(f"CrawlJob with ID {crawl_job_id} does not exist.")
-           
-        crawl_items = await CrawlItem.query().select([
-            CrawlItem.id,
-            func.length(CrawlItem.body).label("body_size"),
-            CrawlItem.url,
-            CrawlItem.depth,
-            CrawlItem.referer
-        ]).where(CrawlItem.crawl_job_id == crawl_job_id).all()
-            
-        if not crawl_items:
-            raise ValueError(f"No CrawlItems found for CrawlJob with ID {crawl_job_id}.")
+        qb = Corpus.query()
         
-        metadata = [item.model_dump(exclude_none=True) for item in crawl_items]
-            
-    return [
-        Message(prompt, role="user"),
-        Message("Understood! From this point forward I am sworn to only output a comma-separated list of IDs that represent the final curation of relevant technical documentation pages."
-                "When the user sends me a collection of CrawlItem records I will conduct my analysis internally, and then output my curated list of ids.", role="assistant"),
-        Message(f"```json\n{json.dumps(metadata)}\n```")
-    ]
+        qb = qb.order(sort, order)  # type: ignore
+
+        qb = qb.select(
+            "corpora.*",
+            "COUNT(DISTINCT documents.id) AS documents_count",
+        )
+        qb = qb.left_joins("documents")
+        qb = qb.group_by("corpora.id")
+
+        offset = (page - 1) * per_page
+        qb = qb.limit(per_page).offset(offset)
+
+        payload.metadata.count = await Corpus.query().count()
+        payload.metadata.page = page
+        payload.metadata.per_page = per_page
+        
+        models = await qb.all()
+        
+        for model in models:
+            model_data = model.model_dump()
+            payload.collection.append(model_data)
+
+        return payload.model_dump()
 
 
-async def _ingest_curated_crawl_items(ctx: Context, crawl_job_id: int, curated_crawl_item_ids: List[int]) -> None:
-    """Ingest the curated CrawlItems into the knowledge base."""
-    async with CrawlItem.async_context() as async_session:
-        async with async_session.begin() as txn: 
-            # Get CrawlJob 
-            crawl_job = await CrawlJob.find(crawl_job_id)
-            if not crawl_job:
-                raise ValueError(f"CrawlJob with ID {crawl_job_id} does not exist.")
-            
-            # Get CrawlItems based on curated_crawl_item_ids + CrawlJob.id
-            crawl_items = await CrawlItem.query().where(
-                CrawlItem.id.in_(curated_crawl_item_ids),
-                CrawlItem.crawl_job_id == crawl_job.id
-            ).all()
-            
-            if not crawl_items:
-                raise ValueError(f"No valid CrawlItems found for the provided IDs in CrawlJob {crawl_job_id}.")
-            
 
-            # LIBRARY
-            library = await Library.query().where(Library.name == "knowledge_base").first()
-            if not library:
-                library = Library(name="knowledge_base")
-                library = await library.save()
-                if not library:
-                    raise ValueError("Failed to create or retrieve the knowledge base library.")
-            
-                
-            # CORPUS
-            corpus_name = next(iter(crawl_job.start_urls), None)
-            if corpus_name is None:
-                raise ValueError(f"CrawlJob {crawl_job_id} has no start URLs to determine corpus name.")
-            corpus_name = re.sub(r'\W+', '_', corpus_name) # Replace non-alphanumeric characters with underscores
-            corpus_name = re.sub(r'__+', '_', corpus_name) # Ensure no double underscores
-            
-            corpus = await Corpus.query().where(
-                Corpus.name == corpus_name,
-                Corpus.library_id == library.id
-            ).first()
 
-            if not corpus:
-                corpus = Corpus(name=corpus_name, library_id=library.id)
-                corpus = await corpus.save()
-                if not corpus:
-                    raise ValueError("Failed to create or retrieve the corpus.")
-                
-            
-            
-            @dataclass(frozen=True)
-            class WorkItem:
-                crawl_item_id: int
-                crawl_item_body: str
-                crawl_item_headers: Dict[str, Any]
-                crawl_item_url: str
-                corpus_id: int
-                
-                @classmethod
-                def from_corpus_and_crawl_item(cls, corpus: Corpus, crawl_item: CrawlItem) -> Self:
-                    return cls(
-                        crawl_item_id=crawl_item.id,
-                        crawl_item_body=crawl_item.body,
-                        crawl_item_headers=dict(crawl_item.response_headers or {}),
-                        crawl_item_url=crawl_item.url,
-                        corpus_id=corpus.id
-                    )
-                
-                    
-                
-                def get_markdown_document(self) -> MdDocument:
-                    """Convert the work item to a markdown document."""
-                    return MdDocument.from_str(
-                        text=self.crawl_item_body,
-                
-                def get_markdown_document(self) -> MdDocument:
-                    """Convert the work item to a markdown document."""
-                    return MdDocument.from_str(
-                        text=self.crawl_item_body,
-                        title=self.crawl_item_headers.get("title", "Untitled Document")
-                    )
-                    
-            work_items = [WorkItem.from_corpus_and_crawl_item(corpus, crawl_item) for crawl_item in crawl_items]
+class ChunkDocumentJob(NamedTuple):
+    crawl_item_id: int
+    chunk_document: ChunkDocument
 
-            
+class ChunkDocumentWorkerPool(AsyncWorkerPoolBase[ChunkDocumentJob]):
+    """Worker pool for processing ChunkDocuments."""
+
+    def __init__(self, jobs: list[ChunkDocumentJob], worker_count: int = 10):
+        super().__init__(jobs=jobs, worker_count=worker_count)
+        self.on_job_done : Callable[[ChunkDocumentJob, bool, str | None], Awaitable[None]] | None = None
+
+    async def work(self, job: ChunkDocumentJob) -> None:
+        """Process a single ChunkDocument."""
+        try:
+            job.chunk_document.chunks # Create chunks (and memoize them)
+        except Exception as e:
+            raise RuntimeError(f"Failed to process ChunkDocument for CrawlItem {job.crawl_item_id}: {e}") from e
+        
+    async def done(self, job: ChunkDocumentJob, status: bool, message: str | None = None) -> None:
+        """Handle completion of a job."""
+        if self.on_job_done:
+            await self.on_job_done(job, status, message)
 
 @mcp.tool
 async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> None:
     """Ingest a CrawlJob into the knowledge base."""
-    
-    
-    sample_messages = []
-
-    # convert the prompt so it's using SamplingMessage objects and the system prompt is plucked from the first entry.
-    prompt_messages: List[PromptMessage] = await _curate_crawl_job_items(ctx, crawl_job_id)
-    if not prompt_messages:
-        raise ValueError("No prompt messages found for curation.")
-    
-    system_message = str(prompt_messages.pop(0).content)
-    
-    for msg in prompt_messages:
-        if not isinstance(msg, PromptMessage):
-            raise ValueError(f"Expected PromptMessage, got {type(msg)}")
-        content = str(msg.content)  # Ensure content is a string
-        if not content:
-            raise ValueError("PromptMessage content cannot be empty.")
-        if not msg.role:
-            raise ValueError("PromptMessage role cannot be empty.")
-
-    sample_messages : List[SamplingMessage | str] = [convert_sample_message_from_prompt_message(msg) for msg in prompt_messages]
-
-    # SAMPLE
-    response = await ctx.sample(
-        system_prompt=system_message,
-        messages=sample_messages,
-        temperature=0, 
-        max_tokens=2000,
-    )
-
-    valid_response = re.compile(r"^\d+(,\d+)*$")  # Regex to match comma-separated integers
-    if not response or not isinstance(response, SamplingMessage) or not valid_response.match(str(response.content)):
-        raise ValueError("Failed to generate a valid response.")
-    
-    curated_crawl_item_ids = [int(id.strip()) for id in str(response.content).split(",") if id.strip().isdigit()]
-    
-    # CONFIRM
-    async with CrawlItem.async_context() as async_session:
-        crawl_items = await CrawlItem.query().where(
-            CrawlItem.id.in_(curated_crawl_item_ids),
-            CrawlItem.crawl_job_id == crawl_job_id
-        ).all()
+    async with CrawlJob.async_context() as async_session:
+        crawl_job = await CrawlJob.query().find(crawl_job_id)
+        if not crawl_job:
+            raise ValueError(f"CrawlJob with ID {crawl_job_id} not found.")
         
-        if not crawl_items:
-            raise ValueError(f"No valid CrawlItems found for the provided IDs in CrawlJob {crawl_job_id}.")
+        corpus_name = crawl_job.get_name_from_most_common_domain()
+
+        corpus = await get_corpus_by_name_or_create(corpus_name)
+
+        qb = CrawlItem.query().where(CrawlItem.crawl_job_id == crawl_job_id).where(CrawlItem.status == 200)
+
+        total_items = await qb.count()
+        completed   = 0
+        errored     = 0
+        started_at  = datetime.datetime.now()
         
-    # ELICIT CONFIRMATION
-    result = await ctx.elicit("Approve this action?", response_type=None)
+        # Create a document for each crawl item
+        async for crawl_items in qb.find_in_batches(batch_size=50):
+            
+            try:
+                crawl_item_id_to_chunk_documents = {crawl_item.id: ChunkDocument.from_html(crawl_item.body) for crawl_item in crawl_items if crawl_item.body}
 
-    if result.action == "accept":
-        await ctx.info(f"Curating {len(crawl_items)} items from CrawlJob {crawl_job_id} into the knowledge base.")
-        
+                # Process in parallel using the worker pool
+                jobs = [
+                    ChunkDocumentJob(crawl_item_id=crawl_item_id, chunk_document=chunk_document) 
+                    for crawl_item_id, chunk_document in crawl_item_id_to_chunk_documents.items()
+                ]
+                pool = ChunkDocumentWorkerPool(jobs=jobs, worker_count=4)
+                async def on_job_complete(job: ChunkDocumentJob, status: bool, message: str | None) -> None:
+                    """Callback for when a job is completed."""
+                    nonlocal completed, errored
+                    if status:
+                        completed += 1
+                        elapsed = datetime.datetime.now() - started_at
+                        elapsed_seconds_total = elapsed.total_seconds()
+
+                        # Rate should include both completed and errored per second
+                        processed = completed + errored
+                        per_second = processed / elapsed_seconds_total if elapsed_seconds_total > 0 else 0.0
+
+                        elapsed_minutes = int(elapsed_seconds_total // 60)
+                        elapsed_seconds = int(elapsed_seconds_total % 60)
+
+                        message = f"⚡ {per_second:0.2f}/s 🟢 {completed} 🔴 {errored} ⏳ {elapsed_minutes:02}:{elapsed_seconds:02}"
+                        await ctx.report_progress(completed, total_items, message)
+                    else:
+                        errored += 1
+                        await ctx.log(f"Error processing ChunkDocument for CrawlItem {job.crawl_item_id}", "error")
+                        
+                pool.pool.on_job_done = on_job_complete
+                await pool.start()
+                await pool.wait_for_completion()
+
+                # Save the batch of documents
+                for job in jobs:
+                    try:
+                        document = await Document.from_chunking_document(job.chunk_document, corpus_id=corpus.id)
+                        await document.save()
+                        
+                        
+                        
+                    except Exception as e:
+                        raise RuntimeError(f"Failed to save document for CrawlItem {job.crawl_item_id}: {e}") from e
+
+            except Exception as e:
+                print(f"Error processing batch of CrawlItems: {e}")
+                await ctx.log(f"Error processing batch of CrawlItems: {e}", "error")
+                errored += 1
 
 
 
 
 
 
-@mcp.prompt( name="curate_crawl_job_items")
-async def curate_crawl_job_items(ctx: Context, crawl_job_id: int) -> List[PromptMessage]:
-    return await _curate_crawl_job_items(ctx, crawl_job_id)

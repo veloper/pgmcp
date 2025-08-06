@@ -1,4 +1,6 @@
-from typing import TYPE_CHECKING, Any, Callable, Dict, Generic, List, Literal, Optional, Type, TypeVar, Union, overload
+from contextlib import asynccontextmanager
+from typing import (TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Generic, List, Literal, Optional, Sequence, Type,
+                    TypeVar, Union, overload)
 
 from sqlalchemy import and_, asc, desc, distinct, func, or_, select, text
 from sqlalchemy.orm import InstrumentedAttribute, joinedload, selectinload, subqueryload
@@ -499,7 +501,7 @@ class QueryBuilder(Generic[T]):
 
     async def all(self) -> List[T]:
         """Rails: Model.all"""
-        async with self.model.async_session() as session:
+        async with self.model.async_context() as session:
             result = await session.execute(self._stmt)
             
             # Check if we have a custom select that includes model columns
@@ -609,11 +611,11 @@ class QueryBuilder(Generic[T]):
         if len(args) == 1 and isinstance(args[0], int):
             n = args[0]
             stmt = self._stmt.limit(n)
-            async with self.model.async_session() as session:
+            async with self.model.async_context() as session:
                 result = await session.execute(stmt)
                 return list(result.scalars().all())
         else:
-            async with self.model.async_session() as session:
+            async with self.model.async_context() as session:
                 result = await session.execute(self._stmt)
                 return result.scalars().first()
 
@@ -638,24 +640,31 @@ class QueryBuilder(Generic[T]):
         if n is not None:
             # Get n records and reverse them to maintain original order
             stmt = reversed_builder._stmt.limit(n)
-            async with self.model.async_session() as session:
+            async with self.model.async_context() as session:
                 result = await session.execute(stmt)
                 records = list(result.scalars().all())
                 return list(reversed(records))
         else:
             # Get the first record from the reversed query
-            async with self.model.async_session() as session:
+            async with self.model.async_context() as session:
                 result = await session.execute(reversed_builder._stmt)
                 return result.scalars().first()
 
-    async def find(self, *ids) -> Union[T, List[T]]:
-        """Rails: Model.find(id) or Model.find([id1, id2])"""
+    @overload
+    async def find(self, id: Any, /) -> T: ...
+    @overload
+    async def find(self, ids: Sequence[Any], /) -> List[T]: ...
+    @overload
+    async def find(self, *ids: Any) -> List[T]: ...
+
+    async def find(self, *ids: Any) -> Union[T, List[T]]:
+        """Rails: Model.find(id) or Model.find([id1, id2]) or Model.find(id1, id2, ...)"""
         if len(ids) == 1:
             id_val = ids[0]
             if isinstance(id_val, (list, tuple)):
                 # Multiple IDs passed as array
                 stmt = select(self.model).filter(self.model.id.in_(id_val))
-                async with self.model.async_session() as session:
+                async with self.model.async_context() as session:
                     result = await session.execute(stmt)
                     records = list(result.scalars().all())
                     if len(records) != len(id_val):
@@ -665,7 +674,7 @@ class QueryBuilder(Generic[T]):
             else:
                 # Single ID
                 stmt = select(self.model).filter(self.model.id == id_val)
-                async with self.model.async_session() as session:
+                async with self.model.async_context() as session:
                     result = await session.execute(stmt)
                     record = result.scalars().first()
                     if record is None:
@@ -674,7 +683,7 @@ class QueryBuilder(Generic[T]):
         else:
             # Multiple IDs passed as separate arguments
             stmt = select(self.model).filter(self.model.id.in_(ids))
-            async with self.model.async_session() as session:
+            async with self.model.async_context() as session:
                 result = await session.execute(stmt)
                 records = list(result.scalars().all())
                 if len(records) != len(ids):
@@ -703,12 +712,12 @@ class QueryBuilder(Generic[T]):
         """Rails: Model.take or Model.take(n) - no ordering"""
         if n is not None:
             stmt = select(self.model).limit(n)
-            async with self.model.async_session() as session:
+            async with self.model.async_context() as session:
                 result = await session.execute(stmt)
                 return list(result.scalars().all())
         else:
             stmt = select(self.model).limit(1)
-            async with self.model.async_session() as session:
+            async with self.model.async_context() as session:
                 result = await session.execute(stmt)
                 return result.scalars().first()
 
@@ -721,7 +730,7 @@ class QueryBuilder(Generic[T]):
             stmt = self._stmt
         
         exists_stmt = select(stmt.exists())
-        async with self.model.async_session() as session:
+        async with self.model.async_context() as session:
             result = await session.execute(exists_stmt)
             return bool(result.scalar() or False)
 
@@ -733,7 +742,7 @@ class QueryBuilder(Generic[T]):
         else:
             count_stmt = self._stmt.with_only_columns(func.count(), maintain_column_froms=True)
         
-        async with self.model.async_session() as session:
+        async with self.model.async_context() as session:
             result = await session.execute(count_stmt)
             return result.scalar_one()
 
@@ -763,7 +772,7 @@ class QueryBuilder(Generic[T]):
         """Rails: Model.sum(:column)"""
         col_attr = getattr(self.model, column)
         sum_stmt = self._stmt.with_only_columns(func.sum(col_attr), maintain_column_froms=True)
-        async with self.model.async_session() as session:
+        async with self.model.async_context() as session:
             result = await session.execute(sum_stmt)
             return result.scalar() or 0
 
@@ -771,7 +780,7 @@ class QueryBuilder(Generic[T]):
         """Rails: Model.average(:column)"""
         col_attr = getattr(self.model, column)
         avg_stmt = self._stmt.with_only_columns(func.avg(col_attr), maintain_column_froms=True)
-        async with self.model.async_session() as session:
+        async with self.model.async_context() as session:
             result = await session.execute(avg_stmt)
             return result.scalar()
 
@@ -779,7 +788,7 @@ class QueryBuilder(Generic[T]):
         """Rails: Model.minimum(:column)"""
         col_attr = getattr(self.model, column)
         min_stmt = self._stmt.with_only_columns(func.min(col_attr), maintain_column_froms=True)
-        async with self.model.async_session() as session:
+        async with self.model.async_context() as session:
             result = await session.execute(min_stmt)
             return result.scalar()
 
@@ -787,7 +796,7 @@ class QueryBuilder(Generic[T]):
         """Rails: Model.maximum(:column)"""
         col_attr = getattr(self.model, column)
         max_stmt = self._stmt.with_only_columns(func.max(col_attr), maintain_column_froms=True)
-        async with self.model.async_session() as session:
+        async with self.model.async_context() as session:
             result = await session.execute(max_stmt)
             return result.scalar()
 
@@ -805,12 +814,12 @@ class QueryBuilder(Generic[T]):
         
         if len(col_attrs) == 1:
             stmt = self._stmt.with_only_columns(col_attrs[0], maintain_column_froms=True)
-            async with self.model.async_session() as session:
+            async with self.model.async_context() as session:
                 result = await session.execute(stmt)
                 return [row[0] for row in result.all()]
         else:
             stmt = self._stmt.with_only_columns(*col_attrs, maintain_column_froms=True)
-            async with self.model.async_session() as session:
+            async with self.model.async_context() as session:
                 result = await session.execute(stmt)
                 return [tuple(row) for row in result.all()]
 
@@ -821,50 +830,56 @@ class QueryBuilder(Generic[T]):
     # ==================================
     # Batch Methods
     # ==================================
+    
+    
+    async def find_each(self, batch_size: int = 1000, start: Optional[int] = None, finish: Optional[int] = None) -> AsyncIterator[T]:
+        """Rails: Model.find_each - yields individual records ordered by PK, paged by id cursor"""
+        current_id = start if start is not None else 0
 
-    async def find_each(self, batch_size: int = 1000, start: Optional[int] = None, 
-                       finish: Optional[int] = None) -> List[T]:
-        """Rails: Model.find_each"""
-        stmt = self._stmt.order_by(self.model.id)
-        
-        if start is not None:
-            stmt = stmt.filter(self.model.id >= start)
-        if finish is not None:
-            stmt = stmt.filter(self.model.id <= finish)
-            
-        stmt = stmt.limit(batch_size)
-        
-        async with self.model.async_session() as session:
-            result = await session.execute(stmt)
-            return list(result.scalars().all())
-
-    async def find_in_batches(self, batch_size: int = 1000, start: Optional[int] = None,
-                             finish: Optional[int] = None):
-        """Rails: Model.find_in_batches - yields batches"""
-        current_id = start or 0
-        
         while True:
-            stmt = self._stmt.order_by(self.model.id)
-            stmt = stmt.filter(self.model.id > current_id)
-            
+            stmt = self._stmt.order_by(self.model.id).filter(self.model.id > current_id)
             if finish is not None:
                 stmt = stmt.filter(self.model.id <= finish)
-                
             stmt = stmt.limit(batch_size)
-            
-            async with self.model.async_session() as session:
+
+            async with self.model.async_context() as session:
                 result = await session.execute(stmt)
                 batch = list(result.scalars().all())
-                
-                if not batch:
-                    break
-                    
-                yield batch
-                
-                current_id = batch[-1].id
-                
-                if finish is not None and current_id >= finish:
-                    break
+
+            if not batch:
+                break
+
+            for record in batch:
+                yield record
+
+            current_id = batch[-1].id
+            if finish is not None and current_id >= finish:
+                break
+
+    async def find_in_batches(self, batch_size: int = 1000, start: Optional[int] = None, finish: Optional[int] = None) -> AsyncIterator[List[T]]:
+        """Rails: Model.find_in_batches - yields batches of records ordered by PK"""
+        current_id = start if start is not None else 0
+
+        while True:
+            stmt = self._stmt.order_by(self.model.id).filter(self.model.id > current_id)
+            if finish is not None:
+                stmt = stmt.filter(self.model.id <= finish)
+            stmt = stmt.limit(batch_size)
+
+            async with self.model.async_context() as session:
+                result = await session.execute(stmt)
+                batch = list(result.scalars().all())
+
+            if not batch:
+                break
+
+            yield batch
+
+            current_id = batch[-1].id
+            if finish is not None and current_id >= finish:
+                break
+        
+            
 
     # ==================================
     # Utility Methods

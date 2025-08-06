@@ -15,10 +15,6 @@ from mcp.types import PromptMessage, TextContent
 from rich.console import Console
 from rich.pretty import Pretty
 
-from pgmcp.custom_markdown_converter import CustomMarkdownConverter
-from pgmcp.html_washing_machine import HTMLWashingMachine
-from pgmcp.markdown_document import MdDocument as MarkdownDocument
-
 
 def deep_merge(*dicts: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -145,54 +141,8 @@ async def fetch_url(url: str, cache: bool = False, cache_dir: str = "/tmp/fetch_
         return response
 
 
-def convert_html_to_markdown_content(
-    html: str,
-) -> str:
-    """
-    Converts HTML content to Markdown.
-    
-    Uses:
-        - `HTMLWashingMachine` to package the cleaning pipeline.
-        - `readability-py` augment content extraction.
-        - `markdownify` to convert the washed HTML to Markdown.
-    
-    Args:
-        html (str): The HTML content to convert.
-
-    Returns
-        str: The converted Markdown content.
-    """
-    machine = HTMLWashingMachine.create(html) \
-        .with_dashes_encoded() \
-        .with_tags_before_h1_removed() \
-        .with_non_pre_code_tags_replaced_with_backticks() \
-        .with_script_tags_removed() \
-        .with_style_tags_removed() \
-        .with_meta_tags_removed() \
-        .with_link_tags_removed() \
-        .with_possible_buttons_removed() \
-        .with_readability_applied()
-
-    clean_html = machine.wash()
-    
-    converter = CustomMarkdownConverter()
-    markdown_text = converter.convert(clean_html)
-    
-    return markdown_text
-           
-            
-
-def convert_markdown_to_markdown_document(markdown: str, title: str | None = None) -> MarkdownDocument:
-    """Converts a Markdown string to a deeply nested Document object."""
-    return MarkdownDocument.from_str(markdown, title=title)
-    
-def convert_html_to_markdown_document(html: str, title: str | None = None) -> MarkdownDocument:
-    md = convert_html_to_markdown_content(html)
-    doc = convert_markdown_to_markdown_document(md, title=title)
-    return doc
-
 def convert_sample_message_from_prompt_message(prompt_message: PromptMessage) -> SamplingMessage:
-    """Convert a PromptMessage to a SamplingMessage."""
+    """Convert a FastMCP PromptMessage to a FactMCP SamplingMessage."""
     if not isinstance(prompt_message, PromptMessage):
         raise ValueError(f"Expected PromptMessage, got {type(prompt_message)}")
     content = str(prompt_message.content)
@@ -202,59 +152,5 @@ def convert_sample_message_from_prompt_message(prompt_message: PromptMessage) ->
         raise ValueError("PromptMessage role cannot be empty.")
     content = cast(TextContent, prompt_message.content)
     return SamplingMessage(role=prompt_message.role, content=content)
-
-
-async def convert_url_to_markdown_document(url: str) -> MarkdownDocument:
-    """
-    Fetches a URL and converts its HTML content to a MarkdownDocument.
-    
-    Args:
-        url (str): The URL to fetch and convert.
-    
-    Returns:
-        MarkdownDocument: The converted document.
-    """
-    response      = await fetch_url(url)
-    html          = response.text
-    soup          = BeautifulSoup(html, "html.parser")
-    title         = soup.title.string if soup.title else None
-    clean_html    = str(soup)
-    return convert_html_to_markdown_document(clean_html, title=title)
-
-async def amain():
-    """
-    Example usage of the utility functions.
-    """
-    console = Console()
-    
-    # Fetch a URL
-    console.log("Fetching URL...")
-    url = "https://docs.unstructured.io/open-source/core-functionality/chunking"
-    # url = "https://python.langchain.com/api_reference/unstructured/document_loaders/langchain_unstructured.document_loaders.UnstructuredLoader.html#langchain_unstructured.document_loaders.UnstructuredLoader"
-    # url = "https://docs.scrapy.org/en/latest/topics/spiders.html"
-    response = await fetch_url(url)
-
-    
-
-    raw_html = response.text
-    
-    markdown_text = convert_html_to_markdown_content(raw_html)
-        
-    console.log("Normalized HTML:")
-
-    # print(markdown_text)
-    # exit(0)
-    
-    markdown_document = convert_markdown_to_markdown_document(markdown_text)
-    
-    pretty_print(markdown_document)
-
-
-    
-
-    
-
-if __name__ == "__main__":
-    run(amain())
 
 

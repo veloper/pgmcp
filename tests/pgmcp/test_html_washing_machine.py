@@ -2,7 +2,7 @@ import pytest
 
 from bs4 import BeautifulSoup, Tag
 
-from pgmcp.html_washing_machine import HTMLWashingMachine
+from pgmcp.chunking.html_washing_machine import HTMLWashingMachine
 
 
 @pytest.fixture

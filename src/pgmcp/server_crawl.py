@@ -20,17 +20,15 @@ OVERVIEW = """
 # Crawl MCP Module
 This module implements a Machine Control Protocol (MCP) interface for orchestrating web crawling operations using Scrapy and PostgreSQL.
 
-## Key Features:
-- Defines, manages, and executes web crawling jobs as discrete entities.
-- Provides tools for job creation, initiation, pausing, listing, and retrieval.
-- Ensures all job metadata and crawl results are persisted in a PostgreSQL database, enabling decoupled pipeline operations and robust state management.
-- Enforces domain boundaries: crawled URLs are restricted to the domains specified in the initial start_urls.
-- Deduplication: All URLs are deduplicated at the run layer to prevent redundant crawling.
+## Flow
 
-This interface abstracts the crawling workflow, allowing external agents (including LLMs) to interact with and control the lifecycle of 
-Scrapy jobs programmatically, while maintaining strict operational constraints and data integrity.
-
+1. Create a Job using the `create_job` tool, specifying the initial URLs and depth.
+2. Start the Job with the `start_job` tool, which enqueues it for execution.
+3. Monitor the Job's progress using the `monitor_job` tool, which provides real-time progress updates.
+4. Report a visually appealing summary of the Job's progress, including:
+    
 ## Job States
+
 IDLE       = 1      # Job is being configured, has not been placed into any other state
 READY      = 2      # Job is ready to be run
 RUNNING    = 4      # Job is in the process of running
@@ -80,11 +78,7 @@ async def create_job(ctx: Context,
     
         await job.save()
         
-        return Payload.create(
-            job.model_dump(), message="Job defined successfully"
-        ).model_dump()
-
-    
+        return Payload.create(job.model_dump(), message="Job defined successfully").model_dump()
     
 @mcp.tool(tags={"scrapy", "spider", "crawler", "job", "get"})
 async def get_job(ctx: Context, job_id: int) -> Dict:
@@ -108,7 +102,7 @@ async def list_jobs(
     order    : Annotated[str, Field(description="Sort order: asc or desc", pattern=r"^(asc|desc)$")] = "desc"
 ) -> Dict[str, Any]:
     """List all Scrapy jobs."""
-    async with CrawlJob.async_context() as async_session:
+    async with CrawlJob.async_context():
         payload = Payload()
         
         # Build base query
@@ -118,16 +112,6 @@ async def list_jobs(
         if sort not in ["created_at", "updated_at", "status", "id"]: raise ValueError(f"Invalid sort attribute: {sort}")
         if order not in ["asc", "desc"]: raise ValueError(f"Invalid sort order: {order}")
         qb = qb.order(sort, order)  # type: ignore
-
-        # Count the logs and items associated with each job - efficient single query
-        qb = qb.select(
-            "crawl_jobs.*",
-            "COUNT(DISTINCT crawl_logs.id) AS log_count",
-            "COUNT(DISTINCT crawl_items.id) AS item_count"
-        )
-        qb = qb.left_joins("crawl_items")
-        qb = qb.left_joins("crawl_logs")
-        qb = qb.group_by("crawl_jobs.id")
 
         # Apply pagination
         offset = (page - 1) * per_page
@@ -151,7 +135,7 @@ async def list_jobs(
 @mcp.tool(tags={"scrapy", "spider", "crawler", "job", "start"})
 async def start_job(ctx: Context, crawl_job_id: int) -> Dict[str, Any]:
     """Enqueue a Scrapy job by its ID to be run by the Scrapy engine asap."""
-    async with CrawlJob.async_context() as async_session:
+    async with CrawlJob.async_context():
         crawl_job = await CrawlJob.find(crawl_job_id)
         if not crawl_job:
             raise ValueError(f"CrawlJob with ID {crawl_job_id} does not exist.")
@@ -194,15 +178,25 @@ async def monitor_job(
 
         async def reporter():
             while True:
-                # Tick every 500ms to check job status
-                await asyncio.sleep(500)
+                await asyncio.sleep(0.250)
                 await crawl_job.refresh()
+
+                progress, total, ratio = crawl_job.stats_progress_and_total_and_ratio
+                message = crawl_job.stats_message_line
+
+                await ctx.report_progress(progress=progress, total=total, message=message)
                 
-                last_periodic_stats = crawl_job.stats
+                if crawl_job.is_done:
+                    await ctx.report_progress(progress=total, total=total, message="Job completed with status: " + crawl_job.status.name)
+                    break
+
+        try:
+            await asyncio.wait_for(reporter(), timeout=timeout)
+        except asyncio.TimeoutError:
+            pass # suppress as expected.
                 
-            # Get the job status
-        status = crawl_job.status
-        return Payload.create(status).model_dump()
+        # Get the job status
+        return Payload.create(crawl_job).model_dump()
 
 @mcp.tool(tags={"scrapy", "spider", "crawler", "job", "logs"})
 async def get_job_logs(

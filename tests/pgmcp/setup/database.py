@@ -43,5 +43,5 @@ def truncate_test_db_tables():
 # call this from a pytest fixture autouse hook
 def setup_database():
     logger.info("Ensuring test database is ready for tests")
-    truncate_test_db_tables()
+    # truncate_test_db_tables()
     logger.info("TEST DATABASE: Setup complete")

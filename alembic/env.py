@@ -3,7 +3,6 @@ import importlib, pkgutil
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
-from sqlalchemy_declarative_extensions import register_alembic_events
 
 from alembic import context
 # add your model's MetaData object here
@@ -20,8 +19,6 @@ def import_all_model_modules():
             importlib.import_module(f"pgmcp.models.{module_name}")
 
 import_all_model_modules()
-
-register_alembic_events(schemas=True, roles=True, grants=True, rows=True)
 
 
 pgmcp_settings = get_settings()
@@ -56,14 +53,8 @@ EXTENSION_TABLES = {
     'us_lex', 'us_gaz', 'us_rules', 'part_config', 'part_config_sub'
 }
 
-EXTENSION_FUNCTIONS = {
-    'get_env', 'pg_settings_reflect_env', 'get_embedding', 'add_numbers'
-}
-
 def should_include_object(object, name, type_, reflected, compare_to):
     if type_ == "table" and name in EXTENSION_TABLES:
-        return False
-    if type_ == "function" and name in EXTENSION_FUNCTIONS:
         return False
     return True
 

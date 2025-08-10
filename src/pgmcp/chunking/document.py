@@ -113,7 +113,8 @@ class Document(BaseModel):
         primary = self.primary_text_splitter.split_text(self.input_content_markdown)
 
         if not isinstance(primary, list) or not primary:
-            raise ValueError("Primary text splitter did not return a non-empty list.")
+            # Thus, we should put the entire content into a single chunk and let the secondary splitter handle it.
+            primary = [self.input_content_markdown]
 
         chunk_models: List[Chunk] = []
         for item in primary:
@@ -202,15 +203,16 @@ class Document(BaseModel):
         
         # Add meta data
         for i, chunk in enumerate(chunk_models):
-            chunk.meta["part_id"]        = i
-            chunk.meta["title"]          = self.title
+            chunk.meta["part_id"] = i
+            chunk.meta["title"]   = self.title
 
         # Slicing to enforce max token limits
-        slicer = Slicer(
-            hopper=chunk_models,
-            max_tokens=self.max_tokens,
-            encoding=self.encoding,
-            text_splitter=self.secondary_text_splitter
-        )
+        slicer = Slicer.model_validate({
+            "hopper": chunk_models,
+            "max_tokens": self.max_tokens,
+            "reserve_tokens": self.reserve_tokens,
+            "encoding": self.encoding,
+            "text_splitter": self.secondary_text_splitter
+        })
 
         return slicer.process()

@@ -168,7 +168,7 @@ async def start_job(ctx: Context, crawl_job_id: int) -> Dict[str, Any]:
 async def monitor_job(
     ctx: Context, 
     crawl_job_id: int, 
-    timeout: Annotated[float, Field(description="Seconds to wait for job completion", ge=5, le=60)] = 30
+    timeout: Annotated[float, Field(description="Seconds to wait for job completion", ge=5, le=60*10)] = 30
 ) -> Dict[str, Any]:
     """Follow a Scrapy job by its ID and return its current status."""
     async with CrawlJob.async_context():

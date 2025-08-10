@@ -3,7 +3,7 @@
 import datetime
 
 from textwrap import dedent
-from typing import Annotated, Any, Awaitable, Callable, Dict, NamedTuple
+from typing import Annotated, Any, Awaitable, Callable, Dict, List, NamedTuple
 
 # Signals
 from fastmcp import Context, FastMCP
@@ -12,6 +12,7 @@ from sqlalchemy import Tuple
 
 from pgmcp.async_worker_pool import AsyncWorkerPoolBase
 from pgmcp.chunking.document import Document as ChunkDocument
+from pgmcp.models.base_query_builder import QueryBuilder
 from pgmcp.models.chunk import Chunk
 from pgmcp.models.corpus import Corpus
 from pgmcp.models.crawl_item import CrawlItem
@@ -181,6 +182,34 @@ mcp = FastMCP(name="Knowledge Base Service", instructions=OVERVIEW)
 # =====================================================
 # =====================================================
 
+def std_corpora_query_builder(per_page: int = 15, page: int = 1, sort: str = "id", order: str = "asc") -> QueryBuilder[Corpus]:
+    qb = Corpus.query()
+    qb = qb.select(
+        "corpora.*",
+        "COUNT(DISTINCT documents.id) AS documents_count",
+        "COUNT(DISTINCT chunks.id) AS chunks_count",
+        "SUM(chunks.token_count) AS chunks_token_total",
+    )
+    
+    qb = qb.left_joins(Corpus.documents)
+    qb = qb.left_joins(Document.chunks)
+
+
+    if not sort.startswith("corpora."):
+        sort = f"corpora.{sort}"
+    if sort not in ["corpora.id", "corpora.created_at", "corpora.updated_at", "corpora.name"]:
+        raise ValueError(f"Invalid sort attribute: {sort}")
+    
+    if order != "asc" and order != "desc":
+        raise ValueError(f"Invalid sort order: {order}")
+
+    qb = qb.order(sort, order)  
+
+    qb = qb.group_by(Corpus.id)
+    
+    qb = qb.limit(per_page).offset((page - 1) * per_page)
+    return qb
+
 @mcp.tool(tags={"corpora", "list", "data", "start"})
 async def list_corpora(
     per_page : Annotated[int, Field(description="Number of corpora per page", ge=1, lt=100)] = 15, 
@@ -194,19 +223,7 @@ async def list_corpora(
         if order not in ["asc", "desc"]: raise ValueError(f"Invalid sort order: {order}")
         payload = Payload()
 
-        qb = Corpus.query()
-        
-        qb = qb.order(sort, order)  # type: ignore
-
-        qb = qb.select(
-            "corpora.*",
-            "COUNT(DISTINCT documents.id) AS documents_count",
-        )
-        qb = qb.left_joins("documents")
-        qb = qb.group_by("corpora.id")
-
-        offset = (page - 1) * per_page
-        qb = qb.limit(per_page).offset(offset)
+        qb = std_corpora_query_builder(per_page=per_page, page=page, sort=sort, order=order)
 
         payload.metadata.count = await Corpus.query().count()
         payload.metadata.page = page
@@ -219,8 +236,6 @@ async def list_corpora(
             payload.collection.append(model_data)
 
         return payload.model_dump()
-
-
 
 
 class ChunkDocumentJob(NamedTuple):
@@ -247,9 +262,9 @@ class ChunkDocumentWorkerPool(AsyncWorkerPoolBase[ChunkDocumentJob]):
             await self.on_job_done(job, status, message)
 
 @mcp.tool
-async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> None:
+async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> Dict[str, Any]:
     """Ingest a CrawlJob into the knowledge base."""
-    async with CrawlJob.async_context() as async_session:
+    async with CrawlJob.async_context() as session:
         crawl_job = await CrawlJob.query().find(crawl_job_id)
         if not crawl_job:
             raise ValueError(f"CrawlJob with ID {crawl_job_id} not found.")
@@ -257,6 +272,10 @@ async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> None:
         corpus_name = crawl_job.get_name_from_most_common_domain()
 
         corpus = await get_corpus_by_name_or_create(corpus_name)
+        
+        # Delete existing documents in the corpus
+        async for doc in Document.query().where(Document.corpus_id == corpus.id).find_each(batch_size=100):
+            await doc.destroy()
 
         qb = CrawlItem.query().where(CrawlItem.crawl_job_id == crawl_job_id).where(CrawlItem.status == 200)
 
@@ -264,6 +283,8 @@ async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> None:
         completed   = 0
         errored     = 0
         started_at  = datetime.datetime.now()
+        
+        
         
         # Create a document for each crawl item
         async for crawl_items in qb.find_in_batches(batch_size=50):
@@ -309,7 +330,6 @@ async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> None:
                         await document.save()
                         
                         
-                        
                     except Exception as e:
                         raise RuntimeError(f"Failed to save document for CrawlItem {job.crawl_item_id}: {e}") from e
 
@@ -319,7 +339,119 @@ async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> None:
                 errored += 1
 
 
+    qb = std_corpora_query_builder(per_page=1, page=1, sort="corpora.id", order="desc")
+    qb = qb.where(Corpus.id == corpus.id)
+    new_corpora = await qb.all()
+    new_corpus = new_corpora[0] if new_corpora else None
+    if not new_corpora:
+        raise ValueError(f"Corpus {corpus.id} not found after ingestion.")
+
+    if not isinstance(new_corpus, Corpus):
+        raise ValueError(f"Expected new_corpus to be a Corpus instance, got {type(new_corpus)}")
+
+    return Payload.create(new_corpus).model_dump()
+
+@mcp.tool(tags={"corpora", "embed", "data"})
+async def embed_corpus(ctx: Context, corpus_id: int) -> Dict[str, Any]:
+    """Embed all documents in a corpus."""
+    async with Corpus.async_context():
+        corpus = await Corpus.query().find(corpus_id)
+        if not corpus:
+            raise ValueError(f"Corpus with ID {corpus_id} not found.")
+        
+        started_at = datetime.datetime.now()
+        
+        async def on_save(chunks, processed, total):
+            """Callback for progress reporting."""
+            
+            elapsed = datetime.datetime.now() - started_at
+            elapsed_seconds_total = elapsed.total_seconds()
+            elapsed_minutes = int(elapsed_seconds_total // 60)
+            elapsed_seconds = int(elapsed_seconds_total % 60)
+            elapsed_str = f"⏳ {elapsed_minutes:02}:{elapsed_seconds:02}"
+
+            processed_str = f"🧬 {processed}/{total} Processed"
+
+            message = f"{processed_str} | {elapsed_str}"
+            await ctx.report_progress(processed, total, message)
+        
+        await corpus.update_embeddings(on_save=on_save)
+        
+        qb = std_corpora_query_builder(per_page=1, page=1, sort="corpora.id", order="desc")
+        qb = qb.where(Corpus.id == corpus.id)
+        new_corpora = await qb.all()
+        new_corpus = new_corpora[0] if new_corpora else None
+
+        if not new_corpus:
+            raise ValueError(f"Corpus {corpus.id} not found after embedding.")
+
+        return Payload.create(new_corpus).model_dump()
 
 
 
 
+@mcp.tool(tags={"corpora", "search", "data", "rag"})
+async def search_corpus(
+    ctx: Context, 
+    query: Annotated[str, Field(description="Query string used to find related knowledge from the base.", min_length=1, max_length=10000)]
+) -> Dict[str, Any]:
+    """Search the knowledge base and uses sampling to enable dynamic rag."""
+    async with Corpus.async_context():
+        library = await get_knowledge_base_library()
+
+        # 2. We need to embed the query
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI()
+
+        response = await client.embeddings.create(
+            model="text-embedding-3-small",
+            input=query
+        )
+
+        if not response or not response.data or not isinstance(response.data, list):
+            raise ValueError(f"Invalid response from OpenAI: {response}")
+
+        query_embedding : List[float] = response.data[0].embedding    
+        
+        if not query_embedding or not isinstance(query_embedding, list):
+            raise ValueError(f"Invalid embedding in response: {response.data[0]}")
+        
+        from pgmcp.models.chunk import Chunk
+        from pgmcp.models.document import Document
+
+        # 2.1 - idea: ask AI to consider narrowing search to a list of documents related to the user's input.
+        # 3. Search the postgresql database using similarity search with pgvector
+        results = []
+        async with Chunk.async_context() as session:
+            qb = Chunk.cosine_distance(query_embedding)
+
+            # Scope to only those documents in the knowledge base library
+            qb = qb.joins(Chunk.document, Document.corpus, Corpus.library)
+            qb = qb.where(Corpus.library_id == library.id)
+            
+            # Limit
+            qb = qb.limit(10)
+
+            chunks = await qb.all()
+            results = [chunk.model_dump_rag() for chunk in chunks]
+            
+            
+        # 4. idea: Format / CURATE the results for use in a new RAG prompt we will construct
+        # for ctx.sample
+
+        # 4. Instructions that tells the AI how to use the response to help the user.
+        instr = dedent(f"""
+            THE USER ORIGINALLY ASKED THIS QUERY:
+            
+            ~~~~~~~~~~
+            {query}
+            ~~~~~~~~~~
+
+            1. ENSURE YOU CONSIDER THE ILLOCUTIONARY FORCE OF THE QUERY ABOVE, AND EXPERTISE THEY CLEARLY ALREADY POSSESS.
+            2. THIS PAYLOAD CONTAINS CHUNKS OF RELEVANT INFORMATION YOU (THE AI) WILL USE TO INFORM YOUR ANSWER OR ASSISTANCE TO THE USER.
+            3. CONSIDER THIS CONTENT, AND THE PERLOCUTIONARY EFFECTS EXPECTED OF YOU, IN YOUR RESPONSE TO THIS PAYLOAD.
+        """)
+
+        payload = Payload.create(results)
+        # 5. on response form the AI, we will use it to respond to the AI using this command right now
+        return payload.model_dump()

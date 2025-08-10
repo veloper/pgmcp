@@ -459,7 +459,8 @@ class Base(DeclarativeBase, RailsQueryInterfaceMixin):
 
     def get_instrumented_attributes(self) -> Dict[str, InstrumentedAttribute]:
         """Return a dictionary of instrumented attributes for the model."""
-        return {attr: getattr(self.__class__, attr) for attr in dir(self.__class__) if isinstance(getattr(self.__class__, attr), InstrumentedAttribute)}
+        return {name: attr for name, attr in self.__mapper__.all_orm_descriptors.items() 
+                if isinstance(attr, InstrumentedAttribute)}
     
     def get_instrumented_attribute_values(self) -> Dict[str, Any]:
         """Return a dictionary of instrumented attribute values for the model."""
@@ -470,12 +471,23 @@ class Base(DeclarativeBase, RailsQueryInterfaceMixin):
         exclude: set[str] | None = None,
         exclude_none: bool = True,
     ) -> Dict[str, Any]:
-        """Serialize the model to a dict, optionally filtering fields and excluding None values.
-        
-        This explicitly handles the additional fields and allows for custom filtering to manage the final form.
-        """
-
-        all_data = self.get_instrumented_attribute_values()
+        """Serialize the model to a dict, skipping unloaded relationships to avoid lazy loads in async context."""
+        import sqlalchemy
+        insp = sqlalchemy.inspect(self)
+        all_data = {}
+        # Only include loaded attributes (skip unloaded relationships)
+        for key, attr in self.get_instrumented_attributes().items():
+            # If this is a relationship, check if it's loaded
+            if hasattr(attr, 'property') and hasattr(attr.property, 'direction'):
+                # Relationship attribute
+                if key in insp.unloaded:
+                    continue  # skip unloaded relationships
+            try:
+                value = getattr(self, key)
+            except Exception:
+                continue  # skip if error
+            all_data[key] = value
+        # Add additional fields
         all_data.update(self.additional_fields)
         data = {}
         for key, value in all_data.items():
@@ -486,5 +498,4 @@ class Base(DeclarativeBase, RailsQueryInterfaceMixin):
             if exclude_none and value is None:
                 continue
             data[key] = value
-        
         return data

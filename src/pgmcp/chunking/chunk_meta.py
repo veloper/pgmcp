@@ -3,6 +3,7 @@
 from typing import Any, Dict
 
 from pydantic import Field, RootModel, model_serializer
+from ruamel.yaml.scalarstring import LiteralScalarString
 
 
 class ChunkMeta(RootModel[Dict[str, Any]]):

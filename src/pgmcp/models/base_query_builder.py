@@ -617,7 +617,8 @@ class QueryBuilder(Generic[T]):
         else:
             async with self.model.async_context() as session:
                 result = await session.execute(self._stmt)
-                return result.scalars().first()
+                rows  = list(result.scalars().all())
+                return rows[0] if rows else None
 
     @overload
     async def last(self, n: int) -> List[T]: ...

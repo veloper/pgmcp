@@ -41,7 +41,7 @@ dependencies = [
     "pyvis>=0.3.2",
     "readability-lxml>=0.8.4.1",
     "requests>=2.32.4",
-    "rich>=14.0.0",
+    "rich[jupyter]>=14.0.0",
     "scipy>=1.16.0",
     "sentencepiece>=0.2.0",
     "sh>=2.2.2",
@@ -63,6 +63,7 @@ dependencies = [
     "justext>=3.0.2",
     "newspaper3k>=0.2.8",
     "openai>=1.98.0",
+    "ruamel-yaml>=0.18.14",
 ]
 
 [project.scripts]

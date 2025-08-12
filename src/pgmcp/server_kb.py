@@ -52,7 +52,11 @@ async def get_corpus_by_name_or_create(name: str) -> Corpus:
         return corpus
     raise ValueError(f"Failed to get or create corpus with name: {name}")
 
-OVERVIEW = """
+
+# =====================================================
+# MCP Setup
+# =====================================================
+mcp = FastMCP(name="Knowledge Base Service", instructions=dedent("""
     # Knowledge Base Service Overview
 
     ## Data Model Overview:
@@ -63,118 +67,33 @@ OVERVIEW = """
             - documents: List[Document]
                 - `Document`
                     - metadata: Dict[str, Any]
-                    - body: Element
-                        - `Element`
-                            - type: str (body, section, paragraph, sentence, listing, table, table_row, table_row_cell, code_block)
-                            - content: Content (e.g., text, code, etc.)
-                            - embedding : Optional[Embedding] (if applicable)
-                            - attributes: Dict[str, Any] (e.g., title for sections)
-                            - left: int (for tree structure)
-                            - right: int (for tree structure)
-                            - level: int (for tree structure)
-                            - position: int (for tree structure)
-                            - children: List[Element] (recursive structure)
-                            - parent: Element | None (for tree structure)
-                            - document: Document (back-reference to the document only on body elements)
+                    - title: str
+                    - chunks: List[Chunk]
+                        - Chunk
+                            - metadata: Dict[str, Any]
+                            - content: str
+                            - embedding: Optional[Embedding]
 
-                    
-    ## Usage
-    This toolset works hand in hand with the crawl_* jobs to handle the ingestion, curation, and management of technical documentation pages into a knowledge base.
+    ## Service Overview
+    This service provides a knowledge base for ingesting, storing, and retrieving documents and their chunks.
     
-    We're under the knowledge base library, thus leaving control over the corpus, and documents of that knowledge base.
     
-    Example:
-    
-    - `documents__ingest :library_id, :corpus_id, :document_uri`
-    - `documents__get :library_id, :corpus_id, :document_id`
-    - `documents__get :id` # absolute allows simplified access on a root resource
-    - `questions__search :query, limit=10` # search for questions similar to a given query etc.
-"""
+    General
+        - enlighten          | Used to enlighten an LLM via RAG query & response. ex. "Use the enlighten tool to ..."
+        - ingest_crawl_job   | Ingest an existing crawl job into its own corpus.
 
-# =====================================================
-# Global Prompts
-# =====================================================
+    Corpora
+        - list_corpora       | List all corpora in the knowledge base
+        - destroy_corpus     | Destroy a corpus and all its associated documents and chunks
+        - get_corpus         | Get a specific corpus by ID, listing all its documents
+        - embed_corpus       | (Re)embed the corpus to be enlightening-enabled
 
-PROMPT_CURATE_CRAWL_ITEMS = dedent("""
-    # IDENTITY AND PURPOSE
-    You are a world-class technical documentation curator specializing in selecting the most relevant and high-quality technical documentation pages from a list of web page metadata. 
+    Documents
+        - list_documents     | List all documents in the knowledge base
+        - destroy_document   | Destroy a document and all its associated chunks
+        - get_document       | Get a specific document by ID, listing all its chunks
 
-    Your goal is to go through a list of raw webpage metadata, identify the most relevant technical documentation pages, while excluding irrelevant content. You will perform an analysis based on the following criteria:
-
-    ## CONTEXT
-
-    Use the following characteristics to determine if a page is relevant technical documentation:
-
-    ### Characteristics
-    - Select only documentation that is accurate and authoritative—information must be correct, up-to-date, and sourced from credible authorities.
-    - Prioritize actionable documentation. Favor pages that provide clear, step-by-step instructions, code samples, or reference details that enable users to solve real problems.
-    - Choose comprehensive resources. Ensure the documentation covers core concepts, edge cases, and practical usage, not just surface-level overviews.
-    - Evaluate structure critically. Prefer content that is well-organized for easy navigation, with logical hierarchy, searchability, and clear sectioning.
-    - Require contextual clarity. Select documentation that explains not just the "how," but also the "why" and "when" to use features or APIs.
-    - Ensure audience targeting. Only include documentation written for the intended technical audience (developers, admins, etc.), and exclude anything that is marketing or generic in nature.
-    - When multiple documentation versions exist, select the most recent and exclude older versions.
-
-    ## INTERACTION
-
-    ### OUTPUT
-    You **MUST** output a comma-separated list of **ID**s that represent your final curation that represents the complete and unabridged set of relevant technical documentation pages to add to the knowledge base. (see illustrative example below)
-
-    ### INPUT
-    You will be provided with a list of raw webpage metadata from which you will base your curation.  See illustrative example below)
-
-
-    ## ILLUSTRATIVE EXAMPLE
-
-    In this illustrative example, we you will see how the **INPUT** is presented, and how you (the curator) should respond with the **OUTPUT**. In this particular case, the curator has determined that the pages with IDs 523 and 524 are relevant, while 525 and 526 are not. This determination is based on body size, URL, depth, and referer information combined with known characteristics of high-quality technical material and common sense url inference. Clearly, the pages with IDs 525 and 526 are not relevant technical documentation pages, as they are likely to be legal, privacy, marketing, or other non-technical content content.
-
-    What's more, the output is strictly constrained to a comma-separated list of integer IDs, with no additional text, formatting, or commentary.
-
-    **INPUT Example:**
-    ```json
-    [
-        {
-            "id":523,
-            "body_size":15000,
-            "url":"https://www.tampermonkey.net",
-            "depth":1,
-            "referer": null,
-        },
-        {
-            "id":524,
-            "body_size":20456,
-            "url":"https://www.tampermonkey.net/faq.php",
-            "depth":2,
-            "referer":"https://www.tampermonkey.net/",
-        },
-        {
-            "id":525,
-            "body_size":102,
-            "url":"https://www.tampermonkey.net/imprint.php",
-            "depth":3,
-            "referer":"https://www.tampermonkey.net/faq.php",
-        },
-        {
-            "id":526,
-            "body_size":5000,
-            "url":"https://www.tampermonkey.net/privacy.php",
-            "depth":2,
-            "referer":"https://www.tampermonkey.net/",
-        }
-        
-
-    ]
-    ```
-
-    **OUTPUT Example:**
-    ```text
-    523,524
-    ```
-""")
-
-# =====================================================
-# MCP Setup
-# =====================================================
-mcp = FastMCP(name="Knowledge Base Service", instructions=OVERVIEW)
+"""))
 
 # =====================================================
 # =====================================================
@@ -237,6 +156,30 @@ async def list_corpora(
 
         return payload.model_dump()
 
+@mcp.tool
+async def destroy_corpus(ctx: Context, corpus_id: int) -> Dict[str, Any]:
+    """Destroy a corpus and all its associated documents and chunks."""
+    async with Corpus.async_context() as session:
+        corpus = await session.get(Corpus, corpus_id)
+        if not corpus:
+            raise ValueError(f"Corpus with ID {corpus_id} not found.")
+
+        await corpus.destroy()
+        
+        return Payload.create({}, message="Corpus deleted successfully.").model_dump()
+
+@mcp.tool
+async def list_documents(ctx: Context, corpus_id: int | None = None) -> Dict[str, Any]:
+    """List all documents in a corpus."""
+    async with Document.async_context() as session:
+        qb = Document.query()
+        if corpus_id is not None:
+            qb = qb.where(Document.corpus_id == corpus_id)
+
+        documents = await qb.all()
+        document_data = [doc.model_dump() for doc in documents]
+        return Payload.create(document_data).model_dump()
+
 
 class ChunkDocumentJob(NamedTuple):
     crawl_item_id: int
@@ -263,7 +206,23 @@ class ChunkDocumentWorkerPool(AsyncWorkerPoolBase[ChunkDocumentJob]):
 
 @mcp.tool
 async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> Dict[str, Any]:
-    """Ingest a CrawlJob into the knowledge base."""
+    """Ingests a completed crawl_job into the knowledge base as a new corpus.
+
+    Deletes any existing documents in the target corpus, processes all successful crawl items,
+    chunks their content, and stores them as documents in the corpus. Progress is reported
+    throughout the ingestion process.
+
+    Args:
+        ctx (Context): The FastMCP context object.
+        crawl_job_id (int): The ID of the crawl job to ingest.
+
+    Returns:
+        Dict[str, Any]: A payload containing the newly created or updated corpus.
+
+    Raises:
+        ValueError: If the crawl job or resulting corpus cannot be found.
+        RuntimeError: If a document fails to save during ingestion.
+    """
     async with CrawlJob.async_context() as session:
         crawl_job = await CrawlJob.query().find(crawl_job_id)
         if not crawl_job:
@@ -290,14 +249,14 @@ async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> Dict[str, Any]:
         async for crawl_items in qb.find_in_batches(batch_size=50):
             
             try:
+                jobs : List[ChunkDocumentJob] = []
+                
+                # Add Jobs
                 crawl_item_id_to_chunk_documents = {crawl_item.id: ChunkDocument.from_html(crawl_item.body) for crawl_item in crawl_items if crawl_item.body}
+                for crawl_item_id, chunk_document in crawl_item_id_to_chunk_documents.items():
+                    jobs.append(ChunkDocumentJob(crawl_item_id=crawl_item_id, chunk_document=chunk_document))
 
-                # Process in parallel using the worker pool
-                jobs = [
-                    ChunkDocumentJob(crawl_item_id=crawl_item_id, chunk_document=chunk_document) 
-                    for crawl_item_id, chunk_document in crawl_item_id_to_chunk_documents.items()
-                ]
-                pool = ChunkDocumentWorkerPool(jobs=jobs, worker_count=4)
+                # Define callback for when a job is completed
                 async def on_job_complete(job: ChunkDocumentJob, status: bool, message: str | None) -> None:
                     """Callback for when a job is completed."""
                     nonlocal completed, errored
@@ -318,12 +277,14 @@ async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> Dict[str, Any]:
                     else:
                         errored += 1
                         await ctx.log(f"Error processing ChunkDocument for CrawlItem {job.crawl_item_id}", "error")
-                        
+
+                # Setup worker pool, start, and wait for completion
+                pool = ChunkDocumentWorkerPool(jobs=jobs, worker_count=4)
                 pool.pool.on_job_done = on_job_complete
                 await pool.start()
                 await pool.wait_for_completion()
 
-                # Save the batch of documents
+                # After batch is processed, we'll save them.
                 for job in jobs:
                     try:
                         document = await Document.from_chunking_document(job.chunk_document, corpus_id=corpus.id)
@@ -353,7 +314,12 @@ async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> Dict[str, Any]:
 
 @mcp.tool(tags={"corpora", "embed", "data"})
 async def embed_corpus(ctx: Context, corpus_id: int) -> Dict[str, Any]:
-    """Embed all documents in a corpus."""
+    """Embed all documents in a corpus to enable semantic search and retrieval.
+
+    Once embedding is complete, use the updated corpus information to inform downstream 
+    tasks and enable enhanced retrieval and RAG workflows using the `kb_search` tool.
+    """
+    
     async with Corpus.async_context():
         corpus = await Corpus.query().find(corpus_id)
         if not corpus:
@@ -390,12 +356,22 @@ async def embed_corpus(ctx: Context, corpus_id: int) -> Dict[str, Any]:
 
 
 
-@mcp.tool(tags={"corpora", "search", "data", "rag"})
-async def search_corpus(
+@mcp.tool(tags={"search", "rag"})
+async def rag(
     ctx: Context, 
-    query: Annotated[str, Field(description="Query string used to find related knowledge from the base.", min_length=1, max_length=10000)]
+    query: Annotated[str, Field(description="Query used to retrieve relevant info from the knowledge base.", min_length=1, max_length=10000)],
+    corpus_id: Annotated[List[int]|None, Field(description="List of corpus IDs to scope the search")] = None,
+    documents_id: Annotated[List[int]|None, Field(description="List of document IDs to scope the search")] = None
 ) -> Dict[str, Any]:
-    """Search the knowledge base and uses sampling to enable dynamic rag."""
+    """Search the knowledge base using a variety of scoping techniques.
+
+    By default, the entire Knowledge Base is searched using cosine similarity search. This, 
+    it's wise to take the user's original query and extrapolate it with context from the ongoing 
+    conversation so that relevant information can be retrieved more effectively.
+
+    Once the chunks of information have been returned you should immediately use them to inform 
+    your response and continued assistance to the user.
+    """
     async with Corpus.async_context():
         library = await get_knowledge_base_library()
 
@@ -419,11 +395,19 @@ async def search_corpus(
         from pgmcp.models.chunk import Chunk
         from pgmcp.models.document import Document
 
-        # 2.1 - idea: ask AI to consider narrowing search to a list of documents related to the user's input.
+        # 2.1 - idea: ask AI to consider narrowing search to a list of documents_id related to the user's input.
         # 3. Search the postgresql database using similarity search with pgvector
         results = []
         async with Chunk.async_context() as session:
-            qb = Chunk.cosine_distance(query_embedding)
+            qb = Chunk.query()
+
+            if documents_id:
+                qb = qb.where(Chunk.document_id.in_(documents_id))
+
+            if corpus_id:
+                qb = qb.where(Document.corpus_id.in_(corpus_id))
+
+            qb = qb.order(Chunk.embedding.cosine_distance(query_embedding))
 
             # Scope to only those documents in the knowledge base library
             qb = qb.joins(Chunk.document, Document.corpus, Corpus.library)
@@ -454,4 +438,5 @@ async def search_corpus(
 
         payload = Payload.create(results)
         # 5. on response form the AI, we will use it to respond to the AI using this command right now
+        return payload.model_dump()
         return payload.model_dump()

@@ -37,7 +37,6 @@ class Slicer(BaseModel):
     hopper: List[Chunk] = Field(default_factory=list, description="Chunks to be sliced.")
     max_tokens: int = Field(8191, description="Max tokens per serialized output chunk.")
     encoding: str = Field("cl100k_base", description="Token encoding.")
-    reserve_tokens: int = Field(0, description="Tokens to reserve for any reason, eating content budget.")
     # Base splitter provides coarse boundaries; we still enforce token ceilings per piece.
     text_splitter: TextSplitterProtocol = Field( default_factory=lambda: RecursiveCharacterTextSplitter(
             separators=["\n", " ", ""], 
@@ -63,7 +62,7 @@ class Slicer(BaseModel):
     def process_chunk(self, chunk: Chunk) -> List[Chunk]:
         """Stroke of the blade, slicing a single Chunk into 1 or many Chunks."""
         sub_chunks: List[Chunk] = []
-        encodable_chunk = EncodableChunk.from_chunk(chunk, model=self.encoding, max_tokens=self.max_tokens, reserve_tokens=self.reserve_tokens)
+        encodable_chunk = EncodableChunk.from_chunk(chunk, model=self.encoding, max_tokens=self.max_tokens)
 
         # Short-Circuit: If it already fits, return as is in a list.
         if not encodable_chunk.is_overflowing:

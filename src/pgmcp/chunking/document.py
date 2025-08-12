@@ -34,7 +34,6 @@ class Document(BaseModel):
 
     encoding: str = Field("cl100k_base", description="Token encoding for chunking.")
     max_tokens: int = Field(8191, description="Max tokens per serialized output chunk.")
-    reserve_tokens: int = Field(0, description="Tokens to reserve for any reason, eating content budget.")
     primary_text_splitter: TextSplitterProtocol = Field(default_factory=lambda: MarkdownHeaderTextSplitter(headers_to_split_on=[("#" * i, f"Header {i}") for i in range(1, 7)]))
     secondary_text_splitter: TextSplitterProtocol = Field(default_factory=lambda: RecursiveCharacterTextSplitter(
         separators=["\n", " ", ""], chunk_size=400, chunk_overlap=0
@@ -200,8 +199,8 @@ class Document(BaseModel):
         self._step_003_assign_title_if_missing()
                 
         chunk_models = self._split_markdown_into_chunks()
-        
-        # Add meta data
+
+        # Add meta data to each chunk
         for i, chunk in enumerate(chunk_models):
             chunk.meta["part_id"] = i
             chunk.meta["title"]   = self.title
@@ -210,9 +209,8 @@ class Document(BaseModel):
         slicer = Slicer.model_validate({
             "hopper": chunk_models,
             "max_tokens": self.max_tokens,
-            "reserve_tokens": self.reserve_tokens,
             "encoding": self.encoding,
-            "text_splitter": self.secondary_text_splitter
+            "text_splitter": self.secondary_text_splitter,
         })
 
         return slicer.process()

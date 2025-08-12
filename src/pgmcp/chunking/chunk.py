@@ -31,16 +31,6 @@ class Chunk(BaseModel):
             "content": self.content,
         }
     
-        
-    @property
-    def yaml_envelope(self) -> str:
-        """Get the YAML envelope / wrapping of this chunk as a string, ensuring accountability for _all_ tokens."""
-        empty = {
-            "meta": {},
-            "content": "",
-        }
-        return HeredocYAML.dump(empty)
-
     def to_str(self) -> str:
         """Serialize chunk to YAML string."""
         return HeredocYAML.dump(self.model_dump())

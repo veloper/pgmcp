@@ -6,6 +6,7 @@ import openai
 
 from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.schema import Index
 
 from pgmcp.models.base import Base
 from pgmcp.models.chunk import Chunk
@@ -19,6 +20,14 @@ if TYPE_CHECKING:
 class Corpus(Base):
     # == Model Metadata =======================================================
     __tablename__ = "corpora"
+    __table_args__ = (
+        Index(
+            "ix_corpora_name_trgm",
+            "name",
+            postgresql_using="gin",
+            postgresql_ops={"name": "gin_trgm_ops"}
+        ),
+    )
 
     # == Columns ==============================================================
     name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)

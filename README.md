@@ -31,6 +31,20 @@ These tools provide an interface for AI Agents to manage multiple graphs in Apac
 | `drop_edge`             | Remove an edge by ident.                                                            | `graph_name: str`, `edge_ident: str`                                                        |
 | `generate_visualization`| Generate a single-page HTML file visualizing a graph using vis.js and pyvis.        | `graph_name: str`                                                                           |
 
+### Knowledge Base Server (`server_kb.py`)
+
+The Knowledge Base Server provides a unified interface for managing, curating, and ingesting technical documentation and web content into a hierarchical knowledge base. It supports corpus discovery, ingestion workflows, document management, embedding, and retrieval (RAG).
+
+| Tool Name           | Purpose/Description                                                                 | Arguments                                                                                                 |
+|---------------------|-------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
+| `ingest_crawl_job`  | Ingest a completed crawl job into the knowledge base as a new corpus.                | `crawl_job_id: int`                                                                                       |
+| `embed_corpus`      | Embed all documents in a corpus to enable semantic search and retrieval.             | `corpus_id: int`                                                                                          |
+| `rag`               | Search the knowledge base using RAG (Retrieval-Augmented Generation) with scoping.   | `query: str`, `corpus_id: List[int] \| None = None` , `documents_id: List[int] \| None = None`                |
+| `list_corpora`      | List all corpora in the knowledge base.                                              | `per_page: int = 15`, `page: int = 1`, `sort: str = "id\|created_at\|updated_at\|name"`, `order: str = "asc\|desc"` |
+| `destroy_corpus`    | Destroy a corpus and all its associated documents and chunks.                        | `corpus_id: int`                                                                                          |
+| `list_documents`    | List all documents, or within a specific corpus.                                     | `corpus_id: int \| None = None`                                                                            |
+| `destroy_document`  | Destroy a document by ID and all its associated chunks.                              | `document_id: int`                                                                                        |
+
 
 ### Crawl Server (`server_crawl.py`)
 
@@ -70,21 +84,7 @@ This server provides a set of tools for low-level PostgreSQL administration, inc
 | `http_request`                    | Make an HTTP request using the pg_http extension.                        | `url: str`, `method: str = "GET"`, `headers: Dict[str, str] = {}`, `body: Dict[str, Any] = {}` |
 
 
-### Knowledge Base Server (`server_kb.py`) [*Work in Progress*]
 
-These tools provide a unified interface for AI Agents to manage, curate, and ingest technical documentation and web content into a hierarchical knowledge base. The system supports corpus discovery, crawl job curation, and ingestion workflows, ensuring only high-quality, relevant documentation is added.
-
-| Tool Name                  | Purpose/Description                                                                                      | Arguments                                                      |
-|----------------------------|----------------------------------------------------------------------------------------------------------|----------------------------------------------------------------|
-| `find_corpus`              | Find a corpus by its name within the knowledge base.                                                     | `corpus_name: str`                                             |
-| `ingest_crawl_job`         | Ingest curated CrawlItems from a CrawlJob into the knowledge base, following AI-driven curation.         | `crawl_job_id: int`                                            |
-| `list_corpus`              | List all corpora in the knowledge base with pagination and sorting.                                     | `per_page: int = 15`, `page: int = 1`, `sort: str = None`, `order: str = None` |
-| `get_or_create_corpus`     | Get or create a corpus with the specified name.                                                          | `corpus_name: str`                                            |
-| `delete_corpus`            | Delete a corpus by its identifier.                                                                 | `corpus_id: int`                                               |
-| `list_documents`           | List all documents in a corpus with pagination and sorting.                                           | `corpus_id: int`, `per_page: int = 15`, `page: int = 1`, `sort: str = None`, `order: str = None` |
-| `get_document`             | Get a specific document by its identifier.                                                              | `document_id: int`                                             |
-| `search_documents`         | Search for documents in a corpus using a query string.                                                  | `corpus_id: int`, `query: str`, `per_page: int = 15`, `page: int = 1`, `sort: str = None`, `order: str = None` |
-| `create_document`          | Create a new document in a corpus.                                                                       | `corpus_id: int`, `title: str`, `content: str`               |
 
 ## Server Setup
 

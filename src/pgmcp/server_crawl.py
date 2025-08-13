@@ -5,6 +5,7 @@ from textwrap import dedent
 from typing import Annotated, Any, Dict, List, Literal, Tuple
 
 from fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import Field
 from sqlalchemy import distinct, func
 
@@ -63,12 +64,15 @@ settings = get_settings()
 # DB Decorators
 # =====================================================
 
-@mcp.tool(tags={"scrapy", "spider", "crawler", "job", "define", "create"})
-async def create_job(ctx: Context, 
+@mcp.tool(tags={"spider", "crawler", "job", "define", "create"}, annotations=ToolAnnotations(
+    idempotentHint=False
+))
+async def create_job(
+    ctx: Context, 
     start_urls: Annotated[List[str], Field(description="List of URLs to start crawling from")],
     depth: Annotated[int, Field(description="Maximum depth to crawl")] = 3,
 ) -> Dict[str, Any]:
-    """Define a new Scrapy job that will not run until explicitly started using `start_job` tool."""
+    """Define a new crawl job that will not run until explicitly started using `start_job` tool."""
     async with CrawlJob.async_context() as async_session:
         job = CrawlJob(
             start_urls=start_urls,
@@ -79,10 +83,13 @@ async def create_job(ctx: Context,
         await job.save()
         
         return Payload.create(job.model_dump(), message="Job defined successfully").model_dump()
-    
-@mcp.tool(tags={"scrapy", "spider", "crawler", "job", "get"})
+
+@mcp.tool(tags={"spider", "crawler", "job", "get"}, annotations=ToolAnnotations(
+    readOnlyHint=True,
+    idempotentHint=True
+))
 async def get_job(ctx: Context, job_id: int) -> Dict:
-    """Get extra information about a specific Scrapy job by its ID."""
+    """Get extra information about a specific crawl job by its ID."""
     async with CrawlJob.async_context() as async_session:
         crawl_job = await CrawlJob.find(job_id)
         if not crawl_job:
@@ -92,8 +99,10 @@ async def get_job(ctx: Context, job_id: int) -> Dict:
 
 
 
-    
-@mcp.tool(tags={"scrapy", "spider", "crawler", "job", "start"})
+
+@mcp.tool(tags={"spider", "crawler", "job", "start"}, annotations=ToolAnnotations(
+    idempotentHint=False
+))
 async def list_jobs(
     ctx: Context,
     per_page : Annotated[int, Field(description="Number of jobs per page", ge=1, lt=100)] = 15, 
@@ -101,7 +110,7 @@ async def list_jobs(
     sort     : Annotated[str, Field(description="Attribute to sort jobs by", pattern=r"^(id|created_at|updated_at|status)$")] = "id", 
     order    : Annotated[str, Field(description="Sort order: asc or desc", pattern=r"^(asc|desc)$")] = "desc"
 ) -> Dict[str, Any]:
-    """List all Scrapy jobs."""
+    """List all crawl jobs."""
     async with CrawlJob.async_context():
         payload = Payload()
         
@@ -132,9 +141,11 @@ async def list_jobs(
 
         return payload.model_dump()
 
-@mcp.tool(tags={"scrapy", "spider", "crawler", "job", "start"})
+@mcp.tool(tags={"spider", "crawler", "job", "start"}, annotations=ToolAnnotations(
+    idempotentHint=False
+))
 async def start_job(ctx: Context, crawl_job_id: int) -> Dict[str, Any]:
-    """Enqueue a Scrapy job by its ID to be run by the Scrapy engine asap."""
+    """Enqueue a crawl job by its ID to be run by the Scrapy engine asap."""
     async with CrawlJob.async_context():
         crawl_job = await CrawlJob.find(crawl_job_id)
         if not crawl_job:
@@ -164,13 +175,16 @@ async def start_job(ctx: Context, crawl_job_id: int) -> Dict[str, Any]:
 
         return Payload.create(crawl_job, message=instructions).model_dump()
 
-@mcp.tool(tags={"scrapy", "spider", "crawler", "job", "monitor"})
+@mcp.tool(tags={"spider", "crawler", "job", "monitor"}, annotations=ToolAnnotations(
+    idempotentHint=True,
+    readOnlyHint=True
+))
 async def monitor_job(
     ctx: Context, 
     crawl_job_id: int, 
     timeout: Annotated[float, Field(description="Seconds to wait for job completion", ge=5, le=60*10)] = 30
 ) -> Dict[str, Any]:
-    """Follow a Scrapy job by its ID and return its current status."""
+    """Follow a crawl job by its ID and return its current status."""
     async with CrawlJob.async_context():
         crawl_job = await CrawlJob.find(crawl_job_id)
         if not crawl_job:
@@ -198,14 +212,17 @@ async def monitor_job(
         # Get the job status
         return Payload.create(crawl_job).model_dump()
 
-@mcp.tool(tags={"scrapy", "spider", "crawler", "job", "logs"})
+@mcp.tool(tags={"spider", "crawler", "job", "logs"}, annotations=ToolAnnotations(
+    idempotentHint=True,
+    readOnlyHint=True
+))
 async def get_job_logs(
     ctx: Context,
     crawl_job_id: int, 
     per_page: Annotated[int, Field(description="Number of logs to retrieve", ge=1, le=100)] = 25,
     page: Annotated[int, Field(description="Page number to retrieve", ge=1)] = 1
 ) -> Dict[str, Any]:
-    """Get detailed logs for a specific Scrapy job by its ID."""
+    """Get detailed logs for a specific crawl job by its ID."""
     async with CrawlJob.async_context() as async_session:
         crawl_job = await CrawlJob.find(crawl_job_id)
         

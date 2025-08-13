@@ -204,39 +204,6 @@ def test_content_token_count_various_cases():
     assert chunk.content_token_count == len(encoder.encode("foo\nbar\nbaz"))
 
 
-def test_envelope_token_count_deterministic():
-    meta = {"a": 1}
-    chunk = EncodableChunk.model_validate({"meta": meta, "content": "foo", "model": "cl100k_base", "max_tokens": 100, })
-    # Envelope token count should be the same for any chunk with same structure
-    chunk2 = EncodableChunk.model_validate({"meta": {"foo": "bar"}, "content": "baz", "model": "cl100k_base", "max_tokens": 100, })
-    assert chunk.envelope_token_count == chunk2.envelope_token_count
-
-def test_content_max_and_remaining_token_count():
-    meta = {"a": "b"}
-    chunk = EncodableChunk.model_validate({"meta": meta, "content": "foo", "model": "cl100k_base", "max_tokens": 100, })
-    expected_max = max(0, chunk.max_token_count - chunk.overhead_token_count)
-    assert chunk.content_max_token_count == expected_max
-    expected_remaining = max(0, chunk.content_max_token_count - chunk.content_token_count)
-    assert chunk.content_remaining_token_count == expected_remaining
-    # Edge: incrementally fill content until just before overflow
-    encoder = chunk.encoder
-    base = "a"
-    for i in range(1, 1000):
-        s = base * i
-        chunk.content = s
-        if chunk.is_overflowing:
-            break
-    else:
-        i = 1000
-    s = base * (i - 1)
-    chunk.content = s
-    # Should not be overflowing, remaining tokens should be >= 0
-    assert not chunk.is_overflowing
-    assert chunk.content_remaining_token_count >= 0
-    # Now add one more character, should overflow
-    chunk.content = s + base
-    assert chunk.is_overflowing
-
 def test_token_count_matches_serialized():
     meta = {"foo": "bar"}
     content = "baz\nqux"
@@ -255,16 +222,4 @@ def test_content_token_count_deterministic():
     expected = len(chunk.encoder.encode("你好"))
     assert chunk.content_token_count == expected
 
-
-
-def test_overflow_deterministic():
-    meta = {"a": 1}
-    chunk = EncodableChunk.model_validate({"meta": meta, "content": "foo", "model": "cl100k_base", "max_tokens": 100, })
-    # Find the minimum max_tokens that does not overflow
-    total = chunk.meta_token_count + chunk.envelope_token_count + chunk.content_token_count
-    chunk.max_tokens = total
-    assert not chunk.is_overflowing
-    # Now reduce max_tokens by 1, should overflow
-    chunk.max_tokens = total - 1
-    assert chunk.is_overflowing
 

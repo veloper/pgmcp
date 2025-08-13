@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, AsyncGenerator, List, Self, Union
 import openai
 
 from bs4 import BeautifulSoup
-from sqlalchemy import ForeignKey, LargeBinary
+from sqlalchemy import ForeignKey, Index, LargeBinary
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from pgmcp.chunking.document import Document as ChunkingDocument
@@ -26,6 +26,14 @@ class Document(Base):
     
     # == Model Metadata =======================================================
     __tablename__ = "documents"
+    __table_args__ = (
+        Index(
+            "ix_documents_title_trgm",
+            "title",
+            postgresql_using="gin",
+            postgresql_ops={"title": "gin_trgm_ops"}
+        ),
+    )
 
     # == Columns ============================================================== 
     corpus_id    : Mapped[int]          = mapped_column(ForeignKey("corpora.id"), nullable=False)

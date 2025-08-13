@@ -7,8 +7,9 @@ from typing import Annotated, Any, Awaitable, Callable, Dict, List, NamedTuple
 
 # Signals
 from fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import Field
-from sqlalchemy import Tuple
+from sqlalchemy import Tuple, text
 
 from pgmcp.async_worker_pool import AsyncWorkerPoolBase
 from pgmcp.chunking.document import Document as ChunkDocument
@@ -56,8 +57,8 @@ async def get_corpus_by_name_or_create(name: str) -> Corpus:
 # =====================================================
 # MCP Setup
 # =====================================================
-mcp = FastMCP(name="Knowledge Base Service", instructions=dedent("""
-    # Knowledge Base Service Overview
+mcp = FastMCP(name="Knowledge Base", instructions=dedent("""
+    # Knowledge Base
 
     ## Data Model Overview:
 
@@ -129,7 +130,10 @@ def std_corpora_query_builder(per_page: int = 15, page: int = 1, sort: str = "id
     qb = qb.limit(per_page).offset((page - 1) * per_page)
     return qb
 
-@mcp.tool(tags={"corpora", "list", "data", "start"})
+@mcp.tool(tags={"corpora", "list"}, annotations=ToolAnnotations(
+    idempotentHint=True,
+    readOnlyHint=True
+))
 async def list_corpora(
     per_page : Annotated[int, Field(description="Number of corpora per page", ge=1, lt=100)] = 15, 
     page     : Annotated[int, Field(description="Page number to retrieve", ge=1)] = 1,
@@ -156,7 +160,9 @@ async def list_corpora(
 
         return payload.model_dump()
 
-@mcp.tool
+@mcp.tool(tags={"corpora", "destroy"}, annotations=ToolAnnotations(
+    destructiveHint=True
+))
 async def destroy_corpus(ctx: Context, corpus_id: int) -> Dict[str, Any]:
     """Destroy a corpus and all its associated documents and chunks."""
     async with Corpus.async_context() as session:
@@ -168,9 +174,14 @@ async def destroy_corpus(ctx: Context, corpus_id: int) -> Dict[str, Any]:
         
         return Payload.create({}, message="Corpus deleted successfully.").model_dump()
 
-@mcp.tool
+
+
+@mcp.tool(tags={"documents", "list"}, annotations=ToolAnnotations(
+    idempotentHint=True,
+    readOnlyHint=True
+))
 async def list_documents(ctx: Context, corpus_id: int | None = None) -> Dict[str, Any]:
-    """List all documents in a corpus."""
+    """List all documents, or within a specific corpus."""
     async with Document.async_context() as session:
         qb = Document.query()
         if corpus_id is not None:
@@ -181,30 +192,24 @@ async def list_documents(ctx: Context, corpus_id: int | None = None) -> Dict[str
         return Payload.create(document_data).model_dump()
 
 
-class ChunkDocumentJob(NamedTuple):
-    crawl_item_id: int
-    chunk_document: ChunkDocument
+@mcp.tool(tags={"documents", "destroy"}, annotations=ToolAnnotations(
+    destructiveHint=True
+))
+async def destroy_document(ctx: Context, document_id: int) -> Dict[str, Any]:
+    """Destroy a document by ID and all of its associated chunks."""
+    async with Document.async_context() as session:
+        document = await session.get(Document, document_id)
+        if not document:
+            raise ValueError(f"Document with ID {document_id} not found.")
 
-class ChunkDocumentWorkerPool(AsyncWorkerPoolBase[ChunkDocumentJob]):
-    """Worker pool for processing ChunkDocuments."""
+        await document.destroy()
 
-    def __init__(self, jobs: list[ChunkDocumentJob], worker_count: int = 10):
-        super().__init__(jobs=jobs, worker_count=worker_count)
-        self.on_job_done : Callable[[ChunkDocumentJob, bool, str | None], Awaitable[None]] | None = None
+        return Payload.create({}, message="Document deleted successfully.").model_dump()
 
-    async def work(self, job: ChunkDocumentJob) -> None:
-        """Process a single ChunkDocument."""
-        try:
-            job.chunk_document.chunks # Create chunks (and memoize them)
-        except Exception as e:
-            raise RuntimeError(f"Failed to process ChunkDocument for CrawlItem {job.crawl_item_id}: {e}") from e
-        
-    async def done(self, job: ChunkDocumentJob, status: bool, message: str | None = None) -> None:
-        """Handle completion of a job."""
-        if self.on_job_done:
-            await self.on_job_done(job, status, message)
 
-@mcp.tool
+@mcp.tool(tags={"ingest", "crawl_job", "corpus"}, annotations=ToolAnnotations(
+    idempotentHint=True
+))
 async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> Dict[str, Any]:
     """Ingests a completed crawl_job into the knowledge base as a new corpus.
 
@@ -223,6 +228,30 @@ async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> Dict[str, Any]:
         ValueError: If the crawl job or resulting corpus cannot be found.
         RuntimeError: If a document fails to save during ingestion.
     """
+    class ChunkDocumentJob(NamedTuple):
+        crawl_item_id: int
+        chunk_document: ChunkDocument
+
+    class ChunkDocumentWorkerPool(AsyncWorkerPoolBase[ChunkDocumentJob]):
+        """Worker pool for processing ChunkDocuments."""
+
+        def __init__(self, jobs: list[ChunkDocumentJob], worker_count: int = 10):
+            super().__init__(jobs=jobs, worker_count=worker_count)
+            self.on_job_done : Callable[[ChunkDocumentJob, bool, str | None], Awaitable[None]] | None = None
+
+        async def work(self, job: ChunkDocumentJob) -> None:
+            """Process a single ChunkDocument."""
+            try:
+                job.chunk_document.chunks # Create chunks (and memoize them)
+            except Exception as e:
+                raise RuntimeError(f"Failed to process ChunkDocument for CrawlItem {job.crawl_item_id}: {e}") from e
+            
+        async def done(self, job: ChunkDocumentJob, status: bool, message: str | None = None) -> None:
+            """Handle completion of a job."""
+            if self.on_job_done:
+                await self.on_job_done(job, status, message)
+    
+    
     async with CrawlJob.async_context() as session:
         crawl_job = await CrawlJob.query().find(crawl_job_id)
         if not crawl_job:
@@ -242,7 +271,6 @@ async def ingest_crawl_job(ctx: Context, crawl_job_id: int) -> Dict[str, Any]:
         completed   = 0
         errored     = 0
         started_at  = datetime.datetime.now()
-        
         
         
         # Create a document for each crawl item
@@ -354,8 +382,6 @@ async def embed_corpus(ctx: Context, corpus_id: int) -> Dict[str, Any]:
         return Payload.create(new_corpus).model_dump()
 
 
-
-
 @mcp.tool(tags={"search", "rag"})
 async def rag(
     ctx: Context, 
@@ -439,4 +465,4 @@ async def rag(
         payload = Payload.create(results)
         # 5. on response form the AI, we will use it to respond to the AI using this command right now
         return payload.model_dump()
-        return payload.model_dump()
+

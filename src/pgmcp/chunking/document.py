@@ -23,6 +23,7 @@ class Document(BaseModel):
         "arbitrary_types_allowed": True
     }
     
+    
     input_content: bytes = Field(..., description="Raw input content to be processed.")
     input_content_type: str = Field("text/html", description="MIME type of the input content.")
 

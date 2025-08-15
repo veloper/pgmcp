@@ -1,6 +1,6 @@
 # from __future__ import annotations
 
-import datetime
+import datetime, re
 
 from textwrap import dedent
 from typing import Annotated, Any, Awaitable, Callable, Dict, List, NamedTuple
@@ -403,7 +403,7 @@ async def rag(
 ) -> Dict[str, Any]:
     """Search the knowledge base using a variety of scoping techniques.
 
-    By default, the entire Knowledge Base is searched using cosine similarity search. This, 
+    By default, the entire Knowledge Base is searched using cosine similarity search. Thus, 
     it's wise to take the user's original query and extrapolate it with context from the ongoing 
     conversation so that relevant information can be retrieved more effectively.
 
@@ -484,3 +484,115 @@ async def rag(
         # 5. on response form the AI, we will use it to respond to the AI using this command right now
         return payload.model_dump()
 
+
+@mcp.prompt
+def assimilate_site(start_urls: str, depth: int = 3) -> str:
+    """
+    Instructs the AI Agent to create and follow a step-by-step plan that will create a crawl_job,
+    start it, monitor it, and then once complete, ingest its data into a library corpus, and 
+    finishing up with embedding the corpus into the knowledge base.
+    """
+
+    # Normalize urls coming in that could be comma, or space separated, or already a list -> into a list.
+    urls = [url.strip() for url in re.split(r"[,\s]+", start_urls) if url.strip()]
+
+    return f"""
+    # IDENTITY AND PURPOSE
+
+    You are an AI agent responsible for automating the process of crawling websites, ingesting their content, and embedding that content into a knowledge base for future retrieval use via the `*_kb_rag` tool.
+
+    ## INSTRUCTIONS
+
+    You MUST follow this structured workflow in a step-by-step manner to accomplish this task (EVEN IF YOU HAVE ALREADY DONE THEM IN THIS CHAT SESSION, YOU WILL DO THEM AGAIN!).
+
+    1. **Create Crawl Job**
+        - Action: Define a crawl job for the specified start URLs and depth.
+        - MCP Tool: `*_crawl_create_job`
+        - Parameters:
+            - start_urls: [{", ".join(urls)}]
+            - depth: {depth}
+        - Returns: 
+            - $CRAWL_JOB_ID : int
+    
+    2. **Start Crawl Job**
+        - Action: Begin crawling the website.
+        - MCP Tool: `*_crawl_start_job`
+        - Parameters:
+            - crawl_job_id: $CRAWL_JOB_ID
+        - Returns:
+            - $CRAWL_JOB_STATUS: str 
+
+    3. **Monitor Crawl Progress**
+        - Action: Track crawl job status for up to 10 minutes.
+        - MCP Tool: `*_crawl_monitor_job`
+        - Parameters:
+            - crawl_job_id: $CRAWL_JOB_ID
+        - Returns:
+            - $CRAWL_JOB_STATS: Dict[str, Dict[str, Any]] # Scrapy's 'periodic' stats 
+
+    4. **Ingest Crawl Job**
+        - Action: Ingest the completed crawl_job into a new corpus.
+        - MCP Tool: `*_kb_ingest_crawl_job`
+        - Parameters:
+            - crawl_job_id: $CRAWL_JOB_ID
+        - Returns:
+            - $CORPUS_ID: int
+            - $DOCUMENTS_COUNT: int
+            - $CHUNKS_COUNT: int
+            - $INGESTION_STATUS: str
+            - $INGESTION_TIME_ELAPSED: str # MM:SS Format
+
+    5. **Embed Corpus**
+        - Action: Embed the corpus into the Knowledge Base to enable Semantic Search through the `*_kb_rag` tool.
+        - MCP Tool: `*_kb_embed_corpus`
+        - Parameters:
+            - corpus_id: $CORPUS_ID
+        - Returns:
+            - $TOKEN_COUNT: int
+            - $EMBEDDING_STATUS: str
+            - $EMBEDDING_TIME_ELAPSED: str # MM:SS Format
+
+    6. **Final Report**
+        - Output a 'Final Report' which looks similar to the following illustrative EXAMPLE. Note, all `<` and `>` placeholders must be replaced with the actual values returned from the tools OR your own analysis of the process.
+
+    ### EXAMPLE
+    
+    ---
+    ---
+    ---
+        
+    # 🏆 Workflow Completion Report
+
+    ## 🌟 Summary
+    <summary>
+
+    ## 🕷️ Crawl Stats 
+    | | | |
+    | --- | --- | --- |
+    | 🌐 | Start URLs      | {", ".join(urls)} |
+    | 🦑 | Depth           | {depth} |
+    | 🗑 | Filtered URLs   | <$CRAWL_JOB_STATS.*.FILTERED_URLS> |
+    | ⚡️ | Rate/m          | <AVG($CRAWL_JOB_STATS.*.DEQUEUED / MINUTES($CRAWL_JOB_STATS.*.ELAPSED_TIME))> |
+    | 🚦 | Responses       | 🟢 2xx - <$CRAWL_JOB_STATS.*.RESPONSES_2XX> / 🔵 3xx - <$CRAWL_JOB_STATS.*.RESPONSES_3XX> / 🔴 4xx - <$CRAWL_JOB_STATS.*.RESPONSES_404> / 🟡 5xx - <$CRAWL_JOB_STATS.*.RESPONSES_500> |
+    | ⏳ | Duration        | <HUMAN_READABLE_TIME($CRAWL_JOB_STATS.*.ELAPSED_TIME)> |
+
+    ## 📈 Ingestion Metrics
+    
+    - ⚡️ **Rate/s**: <LATEST($INGESTION_RATE_PER_SECOND)>
+    - 🗂️ **Corpus ID**: <$CORPUS_ID>
+    - 📄 **# Documents**: <$DOCUMENTS_COUNT>
+    - 🧩 **# Chunks**: <$CHUNKS_COUNT>
+    - 🧬 **# Tokens**: <$TOKEN_COUNT>
+
+    ## 🚀 Next Steps
+    - <Suggested follow-up actions involving `*_kb_rag` tool; how to used it effectively>
+    - <Example queries related to the ingested data specifically>
+
+    ---
+    ---
+    ---
+    
+    ## REMEMBER
+    - You MUST follow the instruction steps in order.
+    - Ensure you handle any errors or exceptions that may occur in stride.
+    """

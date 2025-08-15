@@ -201,7 +201,7 @@ async def monitor_job(
                 await ctx.report_progress(progress=progress, total=total, message=message)
                 
                 if crawl_job.is_done:
-                    await ctx.report_progress(progress=total, total=total, message="Job completed with status: " + crawl_job.status.name)
+                    await ctx.report_progress(progress=total, total=total, message=message)
                     break
 
         try:

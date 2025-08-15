@@ -35,7 +35,7 @@ class Chunk(Base):
 
     # == Relationships ==
     document = relationship("Document", back_populates="chunks")
-    embedding = relationship("Embedding", uselist=False, back_populates="chunk" )
+    embedding = relationship("Embedding", uselist=False, back_populates="chunk", cascade="all, delete-orphan")
 
     # == Methods ==
     

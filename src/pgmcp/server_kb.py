@@ -19,6 +19,7 @@ from pgmcp.models.corpus import Corpus
 from pgmcp.models.crawl_item import CrawlItem
 from pgmcp.models.crawl_job import CrawlJob
 from pgmcp.models.document import Document
+from pgmcp.models.embedding import Embedding
 from pgmcp.models.library import Library
 from pgmcp.payload import Payload
 
@@ -184,8 +185,19 @@ async def list_documents(ctx: Context, corpus_id: int | None = None) -> Dict[str
     """List all documents, or within a specific corpus."""
     async with Document.async_context() as session:
         qb = Document.query()
+        qb.select(
+            Document.id,
+            Document.title,
+            Document.content_type,
+            "COUNT(DISTINCT chunks.id) AS chunks_count"
+        )
+
+        qb.joins(Document.chunks)
+
         if corpus_id is not None:
             qb = qb.where(Document.corpus_id == corpus_id)
+
+        qb.group_by(Document.id)
 
         documents = await qb.all()
         document_data = [doc.model_dump() for doc in documents]
@@ -418,7 +430,6 @@ async def rag(
         if not query_embedding or not isinstance(query_embedding, list):
             raise ValueError(f"Invalid embedding in response: {response.data[0]}")
         
-        from pgmcp.models.chunk import Chunk
         from pgmcp.models.document import Document
 
         # 2.1 - idea: ask AI to consider narrowing search to a list of documents_id related to the user's input.
@@ -427,17 +438,24 @@ async def rag(
         async with Chunk.async_context() as session:
             qb = Chunk.query()
 
+            qb = qb.joins(
+                Chunk.embedding,
+                Chunk.document,
+                Document.corpus,
+                Corpus.library
+            )
+            
+            # Scope to only those documents in the knowledge base library
+            qb = qb.where(Corpus.library_id == library.id)
+            
             if documents_id:
                 qb = qb.where(Chunk.document_id.in_(documents_id))
 
             if corpus_id:
                 qb = qb.where(Document.corpus_id.in_(corpus_id))
 
-            qb = qb.order(Chunk.embedding.cosine_distance(query_embedding))
+            qb = qb.order(Embedding.vector.cosine_distance(query_embedding))
 
-            # Scope to only those documents in the knowledge base library
-            qb = qb.joins(Chunk.document, Document.corpus, Corpus.library)
-            qb = qb.where(Corpus.library_id == library.id)
             
             # Limit
             qb = qb.limit(10)

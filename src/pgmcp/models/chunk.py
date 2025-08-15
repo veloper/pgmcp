@@ -14,6 +14,7 @@ from pgmcp.chunking.encodable_chunk import EncodableChunk
 from pgmcp.chunking.heredoc_yaml import HeredocYAML
 from pgmcp.models.base import Base
 from pgmcp.models.base_query_builder import QueryBuilder
+from pgmcp.models.embedding import Embedding  # Ensure this import exists
 
 
 cl100k_base_encoder = tiktoken.get_encoding("cl100k_base")
@@ -24,17 +25,6 @@ if TYPE_CHECKING:
 
 class Chunk(Base):
     __tablename__ = "chunks"
-    __table_args__ = (
-        # IVFFlat index for cosine distance
-        Index(
-            "ix_chunks_embedding_ivfflat_cosine",
-            "embedding",
-            postgresql_using="ivfflat",
-            postgresql_ops={"embedding": "vector_cosine_ops"},
-            postgresql_with={"lists": 100},
-        ),
-    )
-    
 
     id: Mapped[int]                = mapped_column(Integer, primary_key=True, autoincrement=True)
     document_id: Mapped[int]       = mapped_column(ForeignKey("documents.id"), index=True, nullable=False)
@@ -42,12 +32,11 @@ class Chunk(Base):
     token_model: Mapped[str]       = mapped_column(String, nullable=False, default="cl100k_base")
     token_count: Mapped[int]       = mapped_column(Integer, nullable=False)
     meta: Mapped[dict]             = mapped_column(JSONB, nullable=True)
-    embedding: Mapped[list[float]] = mapped_column(Vector(1536), nullable=True, doc="Vector embedding of the chunk content")
 
     # == Relationships ==
-    
     document = relationship("Document", back_populates="chunks")
-    
+    embedding = relationship("Embedding", uselist=False, back_populates="chunk" )
+
     # == Methods ==
     
     def to_embeddable_input(self) -> str:
@@ -69,9 +58,10 @@ class Chunk(Base):
             input=self.to_embeddable_input(),
             dimensions=1536
         )
-        
-        self.embedding = response.data[0].embedding
-        
+
+        embedding = Embedding( chunk=self, vector=response.data[0].embedding )
+        self.embedding = embedding
+
         return self
     
     def model_dump_rag(self) -> Dict[str, Any]:
@@ -81,10 +71,6 @@ class Chunk(Base):
             "meta": self.meta,
             "content": self.content,
         }
-
-    @classmethod
-    def cosine_distance(cls, vector: List[float]) -> QueryBuilder[Self]:
-        return cls.query().order(Chunk.embedding.cosine_distance(vector))
 
     @classmethod
     async def from_chunking_chunk(cls, document: Union[int, "Document"], chunk: ChunkingChunk) -> "Chunk":

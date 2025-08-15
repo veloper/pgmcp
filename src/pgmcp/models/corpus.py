@@ -10,6 +10,7 @@ from sqlalchemy.schema import Index
 
 from pgmcp.models.base import Base
 from pgmcp.models.chunk import Chunk
+from pgmcp.models.embedding import Embedding
 
 
 if TYPE_CHECKING:
@@ -71,9 +72,14 @@ class Corpus(Base):
                     raise RuntimeError(f"Failed to get embeddings from OpenAI: {e} on {texts}") from e
                 
                 # Update chunks with their embeddings
+                from pgmcp.models.embedding import Embedding
+
                 for i, chunk in enumerate(chunk_bucket):
                     if response and response.data and isinstance(response.data, list) and i < len(response.data) and hasattr(response.data[i], 'embedding') and isinstance(response.data[i].embedding, list):
-                        chunk.embedding = response.data[i].embedding
+                        
+                        embedding = Embedding(chunk=chunk, vector=response.data[i].embedding)
+                        chunk.embedding = embedding
+
                         await chunk.save()
                     else:
                         raise ValueError(f"Invalid response format or missing embedding for chunk {i} in bucket.")

@@ -89,35 +89,8 @@ class Document(Base):
             await Chunk.from_chunking_chunk(doc, chunk)
         
         return doc
-        
-    async def update_embeddings(self) -> None:
-        """Update embeddings for all chunks in the corpus.
-        
-        This is a save operation that will update the embeddings for all chunks in the corpus.
-        """
-        from pgmcp.models.chunk import Chunk
-        client = openai.AsyncOpenAI()
-        
-        async with Chunk.async_context() as session:
-            async for chunk_bucket in self.gather_chunk_buckets():
-                # Ensure chunks are loaded 
-                # Extract text content from chunks
-                texts = [chunk.to_embeddable_input() for chunk in chunk_bucket]
-
-                # Get embeddings from OpenAI
-                response = await client.embeddings.create(
-                    model="text-embedding-3-small",
-                    input=texts
-                )
-                
-                # Update chunks with their embeddings
-                for i, chunk in enumerate(chunk_bucket):
-                    if response and response.data and isinstance(response.data, list) and i < len(response.data) and hasattr(response.data[i], 'embedding') and isinstance(response.data[i].embedding, list):
-                        chunk.embedding = response.data[i].embedding
-                        await chunk.save()
-                    else:
-                        raise ValueError(f"Invalid response format or missing embedding for chunk {i} in bucket.")
-
+       
+    
     async def gather_chunk_buckets(self, token_limit: int = 280000) -> AsyncGenerator[List["Chunk"], None]:
         """Gather chunks into buckets that can be embedded together without exceeding the token limit."""
         from pgmcp.models.chunk import Chunk

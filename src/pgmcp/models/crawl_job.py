@@ -207,8 +207,10 @@ class CrawlJob(Base):
         """Calculate the number of items processed per second."""
         elapsed_seconds = self.stats_elapsed_seconds
         dequeued_count = self.stats_scheduler_dequeued_count
-        return dequeued_count / (elapsed_seconds if elapsed_seconds > 0 else 0.0)
-        
+        if elapsed_seconds > 0:
+            return dequeued_count / elapsed_seconds
+        return 0.0
+
     @property
     def stats_elapsed_seconds(self) -> float:
         if (time_stats := self.stats.get("time")) and isinstance(time_stats, dict):

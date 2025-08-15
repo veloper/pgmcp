@@ -14,6 +14,7 @@ from .crawl_job import CrawlJob
 from .crawl_log import CrawlLog
 from .question import Question
 from .chunk import Chunk
+from .embedding import Embedding
 # isort: on
 
 # Alias the context manager from Base for convenience
@@ -35,6 +36,7 @@ __all__ = [
     "CrawlLog",
     "Question",
     "Chunk",
+    "Embedding",
     "context"
 ]
 

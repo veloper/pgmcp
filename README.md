@@ -35,6 +35,10 @@ These tools provide an interface for AI Agents to manage multiple graphs in Apac
 
 The Knowledge Base Server provides a unified interface for managing, curating, and ingesting technical documentation and web content into a hierarchical knowledge base. It supports corpus discovery, ingestion workflows, document management, embedding, and retrieval (RAG).
 
+
+[crawl_to_kbase.webm](https://github.com/user-attachments/assets/0cae39ca-bde8-4f9f-a92f-2e4ed92d67f1)
+
+
 | Tool Name           | Purpose/Description                                                                 | Arguments                                                                                                 |
 |---------------------|-------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
 | `ingest_crawl_job`  | Ingest a completed crawl job into the knowledge base as a new corpus.                | `crawl_job_id: int`                                                                                       |

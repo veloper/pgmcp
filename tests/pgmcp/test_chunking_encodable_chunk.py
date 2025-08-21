@@ -1,8 +1,5 @@
-from textwrap import dedent
-
 import pytest
 
-from pgmcp.chunking.chunk_meta import ChunkMeta
 from pgmcp.chunking.encodable_chunk import EncodableChunk
 
 
@@ -68,6 +65,50 @@ def complex_meta():
         "Header 2": "PostgreSQL Data Types¶"
     }
 
+
+
+@pytest.fixture
+def complex_content():
+    return (
+        "# PostgreSQL\n"
+        "\n"
+        "PostgreSQL is a powerful, open source object-relational database system.\n"
+        "\n"
+        "## Features\n"
+        "- ACID compliance\n"
+        "- Extensible architecture\n"
+        "- Support for advanced data types\n"
+        "\n"
+        "### Example Usage\n"
+        "```sql\n"
+        "SELECT * FROM users WHERE active = TRUE;\n"
+        "```\n"
+        "\n"
+        "## Data Types Table\n"
+        "| Type      | Description           |\n"
+        "|-----------|----------------------|\n"
+        "| INTEGER   | Whole numbers         |\n"
+        "| TEXT      | Variable-length text  |\n"
+        "| BOOLEAN   | True/False values     |\n"
+        "\n"
+        "## Notes\n"
+        "> PostgreSQL has more than 15 years of active development and a proven architecture.\n"
+        "\n"
+        "### Nested List\n"
+        "- Storage\n"
+        "  - Tablespaces\n"
+        "  - Partitioning\n"
+        "- Security\n"
+        "  - Roles\n"
+        "  - Row-level security\n"
+        "\n"
+        "## Links\n"
+        "[Official Site](https://www.postgresql.org)\n"
+        "\n"
+        "---\n"
+        "\n"
+        "End of document.\n"
+    )
 
 @pytest.fixture
 def encodable_chunk_complex(complex_meta, complex_content):

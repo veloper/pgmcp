@@ -54,13 +54,8 @@ class EncodableChunk(Chunk):
 
     @property
     def content_token_count(self) -> int:
-        """How many tokens are used by the content determined by subtracting it from token_count"""
-        full_token_count = self.token_count
-        original_content = self.content
-        self.content = ""
-        content_missing_token_count = self.token_count
-        self.content = original_content
-        return full_token_count - content_missing_token_count
+        """How many tokens are used by the content (directly, not via YAML envelope)"""
+        return len(self.encoder.encode(self.content))
 
     @property
     def meta_token_count(self) -> int:

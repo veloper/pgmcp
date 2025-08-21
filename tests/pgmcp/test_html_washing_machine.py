@@ -1,6 +1,6 @@
 import pytest
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import Tag
 
 from pgmcp.chunking.html_washing_machine import HTMLWashingMachine
 

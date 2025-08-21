@@ -83,13 +83,6 @@ class DbSettings(BaseSettings):
 
         return connections
         
-
-class AgeSettings(BaseSettings):
-    """AGE-specific configuration."""
-    ident_property: str
-    start_ident_property: str
-    end_ident_property: str
-
 class VectorizeSettings(BaseSettings):
     """Vectorization settings."""
     # GUCs
@@ -141,7 +134,6 @@ class Settings(BaseSettings):
             
     app: AppSettings 
     db: DbSettings
-    age: AgeSettings
     vectorize: VectorizeSettings
     env: Environment = Field(default_factory=Environment.current, description="Current application environment")
     

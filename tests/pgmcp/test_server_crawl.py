@@ -1,10 +1,9 @@
 import os
 
-import pytest, pytest_asyncio
+import pytest
 
-from fastmcp import Client, FastMCP
+from fastmcp import FastMCP
 
-from pgmcp.models.crawl_job import CrawlJob
 from pgmcp.server_crawl import mcp
 
 

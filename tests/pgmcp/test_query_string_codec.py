@@ -1,11 +1,8 @@
 from collections import OrderedDict
-from functools import wraps
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, Generic, List, Self, TypeVar
+from typing import Any, Callable, Dict, Generic, List, TypeVar
 
 import pytest
-
-from _pytest.fixtures import FixtureRequest
 
 from src.pgmcp.query_string_codec import QueryStringCodec
 

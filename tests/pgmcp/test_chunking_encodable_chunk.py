@@ -236,13 +236,13 @@ def test_content_token_count_various_cases():
     assert chunk.content_token_count == 0
     # ASCII
     chunk.content = "abc def"
-    assert chunk.content_token_count == len(encoder.encode("abc def"))
+    assert chunk.content_token_count == 2
     # Unicode
     chunk.content = "你好，世界"
-    assert chunk.content_token_count == len(encoder.encode("你好，世界"))
+    assert chunk.content_token_count == 6
     # Multiline
     chunk.content = "foo\nbar\nbaz"
-    assert chunk.content_token_count == len(encoder.encode("foo\nbar\nbaz"))
+    assert chunk.content_token_count == 5
 
 
 def test_token_count_matches_serialized():

@@ -2,14 +2,14 @@ from textwrap import dedent
 from typing import Annotated, Any, Dict, List, Literal, Tuple
 
 # Signals
-from fastmcp import Client, Context, FastMCP
+from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from pgmcp.ag_graph import AgGraph
-from pgmcp.apache_age import AgPatch, ApacheAGE
-from pgmcp.consts import PG_FUNCTION_ARG_NAME_PATTERN, PG_FUNCTION_NAME_PATTERN, PG_TYPES, PG_TYPES_PATTERN
 from pgmcp.settings import get_settings
+
+
+PG_FUNCTION_NAME_PATTERN = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
 
 
 # =====================================================

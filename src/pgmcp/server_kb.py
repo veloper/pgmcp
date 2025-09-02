@@ -8,6 +8,7 @@ from typing import Annotated, Any, Awaitable, Callable, Dict, List, NamedTuple
 # Signals
 from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
+from openai import AsyncOpenAI
 from pydantic import Field
 from sqlalchemy import Tuple, text
 
@@ -409,79 +410,95 @@ async def rag(
 
     Once the chunks of information have been returned you should immediately use them to inform 
     your response and continued assistance to the user.
+    
+    HARD RULE:
+    - THIS TOOL IS INTENDED TO BE USED MULTIPLE TIMES BEFORE DELIVERING A FINAL RESPONSE.
+    - ENSURE YOU USE THIS TOOL MULTIPLE TIMES WITH DIFFERENT QUERIES TO EXPLORE THE KNOWLEDGE BASE THOROUGHLY.
     """
     async with Corpus.async_context():
         library = await get_knowledge_base_library()
 
-        # 2. We need to embed the query
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI()
+        async def get_chunks_for_query(query: str) -> List[Chunk]:
+            """Retrieve chunks from the knowledge base for a given query."""
+            # 2. We need to embed the query
+            client = AsyncOpenAI()
 
-        response = await client.embeddings.create(
-            model="text-embedding-3-small",
-            input=query
-        )
-
-        if not response or not response.data or not isinstance(response.data, list):
-            raise ValueError(f"Invalid response from OpenAI: {response}")
-
-        query_embedding : List[float] = response.data[0].embedding    
-        
-        if not query_embedding or not isinstance(query_embedding, list):
-            raise ValueError(f"Invalid embedding in response: {response.data[0]}")
-        
-        from pgmcp.models.document import Document
-
-        # 2.1 - idea: ask AI to consider narrowing search to a list of documents_id related to the user's input.
-        # 3. Search the postgresql database using similarity search with pgvector
-        results = []
-        async with Chunk.async_context() as session:
-            qb = Chunk.query()
-
-            qb = qb.joins(
-                Chunk.embedding,
-                Chunk.document,
-                Document.corpus,
-                Corpus.library
+            response = await client.embeddings.create(
+                model="text-embedding-3-small",
+                input=query
             )
-            
-            # Scope to only those documents in the knowledge base library
-            qb = qb.where(Corpus.library_id == library.id)
-            
-            if documents_id:
-                qb = qb.where(Chunk.document_id.in_(documents_id))
 
-            if corpus_id:
-                qb = qb.where(Document.corpus_id.in_(corpus_id))
+            if not response or not response.data or not isinstance(response.data, list):
+                raise ValueError(f"Invalid response from OpenAI: {response}")
 
-            qb = qb.order(Embedding.vector.cosine_distance(query_embedding))
-
+            query_embedding : List[float] = response.data[0].embedding    
             
-            # Limit
-            qb = qb.limit(10)
-
-            chunks = await qb.all()
-            results = [chunk.model_dump_rag() for chunk in chunks]
+            if not query_embedding or not isinstance(query_embedding, list):
+                raise ValueError(f"Invalid embedding in response: {response.data[0]}")
             
+            from pgmcp.models.document import Document
+
+            # 2.1 - idea: ask AI to consider narrowing search to a list of documents_id related to the user's input.
+            # 3. Search the postgresql database using similarity search with pgvector
+            results = []
+            async with Chunk.async_context() as session:
+                qb = Chunk.query()
+
+                qb = qb.joins(
+                    Chunk.embedding,
+                    Chunk.document,
+                    Document.corpus,
+                    Corpus.library
+                )
+                
+                # Scope to only those documents in the knowledge base library
+                qb = qb.where(Corpus.library_id == library.id)
+                
+                if documents_id:
+                    qb = qb.where(Chunk.document_id.in_(documents_id))
+
+                if corpus_id:
+                    qb = qb.where(Document.corpus_id.in_(corpus_id))
+
+                qb = qb.order(Embedding.vector.cosine_distance(query_embedding))
+
+                
+                # Limit
+                qb = qb.limit(25)
+
+                chunks = await qb.all()
+                return chunks
+
+        # attempt to get chunks for the query
+        chunks = await get_chunks_for_query(query)
+
+        
+        results = [chunk.model_dump_rag() for chunk in chunks]
+                
             
         # 4. idea: Format / CURATE the results for use in a new RAG prompt we will construct
         # for ctx.sample
 
         # 4. Instructions that tells the AI how to use the response to help the user.
         instr = dedent(f"""
-            THE USER ORIGINALLY ASKED THIS QUERY:
-            
-            ~~~~~~~~~~
-            {query}
-            ~~~~~~~~~~
-
-            1. ENSURE YOU CONSIDER THE ILLOCUTIONARY FORCE OF THE QUERY ABOVE, AND EXPERTISE THEY CLEARLY ALREADY POSSESS.
-            2. THIS PAYLOAD CONTAINS CHUNKS OF RELEVANT INFORMATION YOU (THE AI) WILL USE TO INFORM YOUR ANSWER OR ASSISTANCE TO THE USER.
-            3. CONSIDER THIS CONTENT, AND THE PERLOCUTIONARY EFFECTS EXPECTED OF YOU, IN YOUR RESPONSE TO THIS PAYLOAD.
+            Retrieval-Augmented Generation Instructions:
         """)
 
-        payload = Payload.create(results)
-        # 5. on response form the AI, we will use it to respond to the AI using this command right now
+        if not results:
+            instr += dedent(f"""
+                1. THE QUERY YOU USED DID NOT RETURN ANY RELEVANT CHUNKS. 
+                2. YOU **MUST** USE THIS `RAG` TOOL AGAIN WITH A QUERY MORE ALIGNED TO THE USER'S INTENT.
+            """)
+        else:
+            instr += dedent(f"""
+                1. ENSURE YOU CONSIDER THE ILLOCUTIONARY FORCE OF THE USER'S ORIGINAL QUERY, AND THE LEVEL OF EXPERTISE THEY CLEARLY ALREADY POSSESS.
+                2. THIS PAYLOAD CONTAINS CHUNKS OF RELEVANT INFORMATION YOU (THE AI) WILL USE TO INFORM YOUR ANSWER OR ASSISTANCE TO THE USER.
+                3. CONSIDER THIS CONTENT, AND THE PERLOCUTIONARY EFFECTS EXPECTED OF YOU, IN YOUR RESPONSE TO THIS PAYLOAD.
+            """)
+
+        payload = Payload.create(results, message=instr, count=len(results))
+        
+        
         return payload.model_dump()
 
 

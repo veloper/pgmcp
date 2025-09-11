@@ -3,13 +3,13 @@
 import datetime, re
 
 from textwrap import dedent
-from typing import Annotated, Any, Awaitable, Callable, Dict, List, NamedTuple
+from typing import Annotated, Any, Awaitable, Callable, Dict, List, NamedTuple, Union
 
 # Signals
 from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 from openai import AsyncOpenAI
-from pydantic import Field
+from pydantic import BaseModel, Field
 from sqlalchemy import Tuple, text
 
 from pgmcp.async_worker_pool import AsyncWorkerPoolBase
@@ -84,6 +84,7 @@ mcp = FastMCP(name="Knowledge Base", instructions=dedent("""
     General
         - enlighten          | Used to enlighten an LLM via RAG query & response. ex. "Use the enlighten tool to ..."
         - ingest_crawl_job   | Ingest an existing crawl job into its own corpus.
+        - expand_chunk       | Expand a chunk by retrieving neighboring chunks for additional context.
 
     Corpora
         - list_corpora       | List all corpora in the knowledge base
@@ -395,6 +396,8 @@ async def embed_corpus(ctx: Context, corpus_id: int) -> Dict[str, Any]:
         return Payload.create(new_corpus).model_dump()
 
 
+
+
 @mcp.tool(tags={"search", "rag"})
 async def rag(
     ctx: Context, 
@@ -487,7 +490,7 @@ async def rag(
         if not results:
             instr += dedent(f"""
                 1. THE QUERY YOU USED DID NOT RETURN ANY RELEVANT CHUNKS. 
-                2. YOU **MUST** USE THIS `RAG` TOOL AGAIN WITH A QUERY MORE ALIGNED TO THE USER'S INTENT.
+                2. YOU **MUST** USE THIS `*_rag` TOOL **AGAIN** WITH A QUERY MORE ALIGNED TO THE USER'S INTENT.
             """)
         else:
             instr += dedent(f"""
@@ -498,7 +501,83 @@ async def rag(
 
         payload = Payload.create(results, message=instr, count=len(results))
         
+        return payload.model_dump()
+
+
+@mcp.tool(tags={"search", "expand"})
+async def contextualize(
+    ctx: Context,
+    chunk_ids: Annotated[List[int], Field(description="List of chunk IDs to expand and clarify")],
+    before: Annotated[int, Field(description="# of Chunks to include before each of the `chunk_ids`")],
+    after: Annotated[int, Field(description="# of Chunks to include after each of the `chunk_ids`")],
+    max_tokens: Annotated[int, Field(description="Max tokens for the entire response")] = 2048
+) -> Dict[str, Any]:
+    """Clarify results from the `*_rag` tool to more deeply understand the source material and its context relevance to the user's query."""
+
+    results = []
+    async with Chunk.async_context() as session:
+        # 1 get the min/max chunk ids for each document associated with each of the chunk_ids
+        qb = Chunk.query().select(
+            Chunk.id,
+            Chunk.document_id,
+            "MIN(chunks.id) OVER (PARTITION BY chunks.document_id) AS min_chunk_id",
+            "MAX(chunks.id) OVER (PARTITION BY chunks.document_id) AS max_chunk_id"
+        )
+
+        qb = qb.group_by(Chunk.document_id, Chunk.id)
+        qb = qb.where(Chunk.id.in_(chunk_ids))
+
+        min_max_chunks = await qb.all()
+
+        # Map chunk IDs to document IDs
+        chunk_to_document = { r.id: r.document_id for r in min_max_chunks }
+
+        # Map document IDs to their min/max chunk IDs
+        document_to_chunk_minmax = {}
+        for record in min_max_chunks:
+            document_to_chunk_minmax[record.document_id] = (record.additional_fields["min_chunk_id"], record.additional_fields["max_chunk_id"])
+
+        # Expand each chunk to valid before and after ids
+        # and then populate the expanded_chunk_ids_set with
+        # the deterministic ids using range to generate them
+        expanded_chunk_ids_set = set()
+        for origin_chunk_id in chunk_ids:
+            document_id = chunk_to_document.get(origin_chunk_id)
+
+            if not document_id:
+                raise ValueError(f"Document ID not found for chunk_id: {origin_chunk_id}")
+
+            document_minmax = document_to_chunk_minmax.get(document_id)
+
+            if not document_minmax:
+                raise ValueError(f"Document range not found for document_id: {document_id}")
+
+            min_doc_chunk_id, max_doc_chunk_id = document_minmax
+            desired_min_chunk_id = origin_chunk_id - before
+            desired_max_chunk_id = origin_chunk_id + after
+
+            effective_min_chunk_id = max(min_doc_chunk_id, desired_min_chunk_id)
+            effective_max_chunk_id = min(max_doc_chunk_id, desired_max_chunk_id)
+
+            expanded_chunk_ids_set.update(range(effective_min_chunk_id, effective_max_chunk_id + 1))
+
+        # Now, we just need to query the chunks
+        chunks = await Chunk.query().where(Chunk.id.in_(expanded_chunk_ids_set)).all()
+
+        if not chunks:
+            return Payload.create([], message="No relevant chunks found").model_dump()
         
+        # Enforce max tokens
+        token_count = 0
+        results = []
+        for chunk in chunks:
+            token_count += chunk.token_count
+            if token_count > max_tokens: # enforce max tokens
+                break
+            results.append(chunk.model_dump_rag())
+
+        payload = Payload.create(results, message="Relevant chunks found", count=len(results))
+
         return payload.model_dump()
 
 
